@@ -53,42 +53,69 @@ const StyledGenerateButton = styled.button`
 //Use my current location button css
 
 const StyledLocationButton = styled.button`
-  width: 165px;
-  height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 220px;
+  height: 52px;
   cursor: pointer;
   color: #fff;
-  font-size: 17px;
-  border-radius: 1rem;
-  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border-radius: 14px;
+  border: 2px solid rgba(0, 210, 255, 0.3);
   position: relative;
-  background: #100720;
-  transition: 0.1s;
+  overflow: hidden;
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+  transition: all 0.3s ease;
+  box-shadow: 0 0 15px rgba(0, 210, 255, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 
-  &::after {
+  &::before {
     content: "";
-    width: 100%;
-    height: 100%;
-    background-image: radial-gradient(
-      circle farthest-corner at 10% 20%,
-      rgba(255, 94, 247, 1) 17.8%,
-      rgba(2, 245, 255, 1) 100.2%
-    );
-    filter: blur(15px);
-    z-index: -1;
     position: absolute;
-    left: 0;
-    top: 0;
-    border-radius: 1rem;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(
+      circle,
+      rgba(0, 210, 255, 0.15) 0%,
+      transparent 70%
+    );
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  &:hover {
+    border-color: rgba(0, 210, 255, 0.6);
+    box-shadow: 0 0 25px rgba(0, 210, 255, 0.3),
+      0 0 60px rgba(0, 210, 255, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    transform: translateY(-2px);
+    background: linear-gradient(135deg, #141136, #3a3580, #2d2a50);
+  }
+
+  &:hover::before {
+    opacity: 1;
   }
 
   &:active {
-    transform: scale(0.9) rotate(3deg);
-    background: radial-gradient(
-      circle farthest-corner at 10% 20%,
-      rgba(255, 94, 247, 1) 17.8%,
-      rgba(2, 245, 255, 1) 100.2%
-    );
-    transition: 0.5s;
+    transform: translateY(1px) scale(0.97);
+    box-shadow: 0 0 10px rgba(0, 210, 255, 0.2);
+    transition: all 0.1s ease;
+  }
+
+  .pin-icon {
+    font-size: 20px;
+    animation: bounce 2s ease-in-out infinite;
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
   }
 `;
 
@@ -108,6 +135,19 @@ export default function SkyObservationApp() {
     };
   };
 
+  // Last night: yesterday 6 PM → today 6 AM
+  const getLastNightRange = () => {
+    const today = new Date();
+    const yesterday = subDays(today, 1);
+    const startDate = setHours(setMinutes(setSeconds(yesterday, 0), 0), 18);
+    const endDate = setHours(setMinutes(setSeconds(today, 0), 0), 6);
+    return {
+      startDate,
+      endDate,
+      key: "selection",
+    };
+  };
+
   // --- State hooks ---
   const canvasRef = React.useRef(null);
   const [ra, setRa] = useState("");
@@ -116,7 +156,7 @@ export default function SkyObservationApp() {
   const [longitude, setLongitude] = useState("");
 
   // Define the preset options
-  type PresetOption = "nextNight" | "next7" | "next15" | "custom";
+  type PresetOption = "lastNight" | "nextNight" | "next7" | "next15" | "custom";
 
   // Default preset
   const [preset, setPreset] = useState<PresetOption>("nextNight");
@@ -136,14 +176,7 @@ export default function SkyObservationApp() {
   });
 
   // Theme state with system auto-detection
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    if (typeof window !== "undefined") {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light";
-    }
-    return "dark";
-  });
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
 
   useEffect(() => {
     const listener = (e: MediaQueryListEvent) =>
@@ -151,6 +184,18 @@ export default function SkyObservationApp() {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     media.addEventListener("change", listener);
     return () => media.removeEventListener("change", listener);
+  }, []);
+
+  // Stable chart dimensions based on window size
+  const [chartHeight, setChartHeight] = useState(() => window.innerHeight - 80);
+  const [chartWidth, setChartWidth] = useState(() => window.innerWidth - 340);
+  useEffect(() => {
+    const onResize = () => {
+      setChartHeight(window.innerHeight - 80);
+      setChartWidth(window.innerWidth - 340);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   const toggleTheme = () => {
@@ -221,7 +266,11 @@ export default function SkyObservationApp() {
   useEffect(() => {
     const now = new Date();
 
-    if (preset === "nextNight") {
+    if (preset === "lastNight") {
+      setRange([getLastNightRange()]);
+      setCustomRangeTouched(false);
+      setShowPicker(false);
+    } else if (preset === "nextNight") {
       setRange([getNightRange(now)]); // sets start: tomorrow 18:00, end: day after tomorrow 06:00
       setCustomRangeTouched(false);
       setShowPicker(false);
@@ -339,8 +388,8 @@ export default function SkyObservationApp() {
             `Date: ${DateTime.fromJSDate(dayStart)
               .setZone(tz)
               .toFormat("yyyy-LL-dd")}<br>Max Alt: ${maxAlt.toFixed(
-              2
-            )}° at ${localDT.toFormat("HH:mm")}`
+                2
+              )}° at ${localDT.toFormat("HH:mm")}`
           );
         }
       }
@@ -355,24 +404,54 @@ export default function SkyObservationApp() {
             name: "Daily Max Altitude",
             hoverinfo: "text",
             hovertext: dailyHover,
-            line: { shape: "spline" },
+            line: { shape: "spline", width: 3, color: "#00d2ff" },
+            marker: {
+              size: 8,
+              color: "#00d2ff",
+              line: { color: "rgba(0, 210, 255, 0.4)", width: 3 },
+              symbol: "circle",
+            },
+            fill: "tozeroy",
+            fillcolor: "rgba(0, 210, 255, 0.08)",
           },
         ],
         layout: {
-          title: `Daily Max Altitude from ${DateTime.fromJSDate(startDateObj)
-            .setZone(tz)
-            .toISODate()} to ${DateTime.fromJSDate(endDateObj)
-            .setZone(tz)
-            .toISODate()}`,
-          xaxis: {
-            title: "Date",
-            type: "date",
-            tickformat: "%Y-%m-%d",
+          title: {
+            text: `Daily Max Altitude<br><sub>${DateTime.fromJSDate(startDateObj)
+              .setZone(tz)
+              .toISODate()} → ${DateTime.fromJSDate(endDateObj)
+                .setZone(tz)
+                .toISODate()}</sub>`,
+            font: { family: "Inter, system-ui, sans-serif", size: 18 },
           },
-          yaxis: { title: "Max Altitude (°)" },
+          xaxis: {
+            title: { text: "Date", font: { family: "Inter, system-ui, sans-serif", size: 13 } },
+            type: "date",
+            tickformat: "%b %d",
+            gridcolor: "rgba(128,128,128,0.15)",
+            griddash: "dot",
+            linecolor: "rgba(128,128,128,0.3)",
+            tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
+          },
+          yaxis: {
+            title: { text: "Max Altitude (°)", font: { family: "Inter, system-ui, sans-serif", size: 13 } },
+            gridcolor: "rgba(128,128,128,0.15)",
+            griddash: "dot",
+            linecolor: "rgba(128,128,128,0.3)",
+            zeroline: true,
+            zerolinecolor: "rgba(128,128,128,0.3)",
+            tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
+          },
           hovermode: "x unified",
-          template: "plotly_white",
+          hoverlabel: {
+            bgcolor: "rgba(20,20,40,0.9)",
+            bordercolor: "rgba(0,210,255,0.5)",
+            font: { family: "Inter, system-ui, sans-serif", size: 12, color: "#e0e0e0" },
+          },
+          paper_bgcolor: "rgba(0,0,0,0)",
+          plot_bgcolor: "rgba(0,0,0,0)",
           height: 600,
+          margin: { t: 70, r: 30, b: 60, l: 60 },
         },
       });
       return;
@@ -444,8 +523,8 @@ export default function SkyObservationApp() {
       hoverText.push(
         altT !== null
           ? `Time: ${localDT.toFormat(
-              "yyyy-LL-dd HH:mm"
-            )}<br>Alt: ${altT.toFixed(2)}°<br>Sep: ${sep.toFixed(2)}°`
+            "yyyy-LL-dd HH:mm"
+          )}<br>Alt: ${altT.toFixed(2)}°<br>Sep: ${sep.toFixed(2)}°`
           : ""
       );
     });
@@ -474,13 +553,13 @@ export default function SkyObservationApp() {
     }
     const duskLocal = astroDuskDate
       ? DateTime.fromJSDate(astroDuskDate)
-          .setZone(tz)
-          .toFormat("yyyy-LL-dd HH:mm")
+        .setZone(tz)
+        .toFormat("yyyy-LL-dd HH:mm")
       : "N/A";
     const dawnLocal = astroDawnDate
       ? DateTime.fromJSDate(astroDawnDate)
-          .setZone(tz)
-          .toFormat("yyyy-LL-dd HH:mm")
+        .setZone(tz)
+        .toFormat("yyyy-LL-dd HH:mm")
       : "N/A";
 
     // Compute visibility hours over entire span
@@ -509,42 +588,75 @@ export default function SkyObservationApp() {
           name: "Target Altitude",
           hoverinfo: "text",
           hovertext: hoverText,
+          line: { color: "#00d2ff", width: 2.5, shape: "spline" },
+          fill: "tozeroy",
+          fillcolor: "rgba(0, 210, 255, 0.07)",
         },
         {
           x: allTimes,
           y: moonAlt,
           mode: "lines",
-          name: "Moon Altitude",
-          line: { dash: "dash" },
+          name: "🌙 Moon Altitude",
+          line: { dash: "dash", color: "#f5a623", width: 2 },
         },
         {
           x: [allTimes[0], allTimes[allTimes.length - 1]],
           y: [0, 0],
           mode: "lines",
           name: "Horizon 0°",
-          line: { dash: "dash" },
+          line: { dash: "dash", color: "rgba(150,150,150,0.5)", width: 1.5 },
+          showlegend: false,
         },
         {
           x: [allTimes[0], allTimes[allTimes.length - 1]],
           y: [hz, hz],
           mode: "lines",
           name: `Horizon ${hz}°`,
-          line: { dash: "dot" },
+          line: { dash: "dot", color: "#ff6b6b", width: 2 },
         },
         {
           x: [peakTime],
           y: [peakAlt],
           mode: "markers",
           name: "★ Peak Altitude",
-          marker: { symbol: "star", size: 12 },
+          marker: {
+            symbol: "star",
+            size: 16,
+            color: "#ffd700",
+            line: { color: "rgba(255, 215, 0, 0.4)", width: 3 },
+          },
         },
+        // "Now" marker — only for lastNight / nextNight
+        ...((preset === "lastNight" || preset === "nextNight") ? (() => {
+          const nowDate = new Date();
+          // Only show if current time falls within the chart range
+          if (nowDate >= startDateObj && nowDate <= endDateObj) {
+            const tNow = Astronomy.MakeTime(nowDate);
+            const tgtNow = Astronomy.Horizon(tNow, obs, raH, decD, "normal");
+            const nowAlt = tgtNow.altitude;
+            const localNow = DateTime.fromJSDate(nowDate).setZone(tz);
+            return [{
+              x: [nowDate],
+              y: [nowAlt >= 0 ? nowAlt : 0],
+              mode: "markers+text",
+              name: "📍 Now",
+              marker: {
+                symbol: "diamond",
+                size: 14,
+                color: "#00ff88",
+                line: { color: "rgba(0, 255, 136, 0.5)", width: 3 },
+              },
+              text: [`${nowAlt.toFixed(1)}°`],
+              textposition: "top center",
+              textfont: { family: "Inter, system-ui, sans-serif", size: 12, color: "#00ff88" },
+              hoverinfo: "text",
+              hovertext: [`Now: ${localNow.toFormat("HH:mm")}<br>Alt: ${nowAlt.toFixed(2)}°`],
+            }];
+          }
+          return [];
+        })() : []),
       ],
       layout: {
-        title: `Target vs Moon: ${DateTime.fromJSDate(startDateObj)
-          .setZone(tz)
-          .toFormat("yyyy-LL-dd HH:mm")} → ${DateTime.fromJSDate(endDateObj)
-          .setZone(tz)
-          .toFormat("yyyy-LL-dd HH:mm")}`,
         shapes: [
           astroDuskDate && {
             type: "line",
@@ -553,7 +665,7 @@ export default function SkyObservationApp() {
             yref: "paper",
             y0: 0,
             y1: 1,
-            line: { color: "orange", dash: "dot", width: 2 },
+            line: { color: "#ff9f43", dash: "dot", width: 2 },
           },
           astroDawnDate && {
             type: "line",
@@ -562,47 +674,83 @@ export default function SkyObservationApp() {
             yref: "paper",
             y0: 0,
             y1: 1,
-            line: { color: "steelblue", dash: "dash", width: 2 },
+            line: { color: "#54a0ff", dash: "dash", width: 2 },
           },
         ],
         annotations: [
           {
             x: peakTime,
             y: peakAlt,
-            text: `Max Alt: ${peakAlt.toFixed(2)}°`,
+            text: `<b>Peak: ${peakAlt.toFixed(2)}°</b>`,
             showarrow: true,
-            arrowhead: 1,
+            arrowhead: 2,
+            arrowsize: 1.2,
+            arrowcolor: "#ffd700",
             ax: 0,
-            ay: -40,
+            ay: -45,
+            font: { family: "Inter, system-ui, sans-serif", size: 13, color: "#ffd700" },
+            bgcolor: "rgba(20,20,40,0.75)",
+            bordercolor: "rgba(255,215,0,0.4)",
+            borderwidth: 1,
+            borderpad: 5,
           },
           {
             xref: "paper",
             yref: "paper",
             x: 0.02,
-            y: 0.98,
+            y: 0.02,
             text:
-              `Moon Phase: ${moonPct.toFixed(1)}%<br>` +
-              `Visibility: ${visibilityHours.toFixed(2)} h<br>` +
-              `Astro Dusk: ${duskLocal}<br>` +
-              `Astro Dawn: ${dawnLocal}`,
+              `<b>🌙 Moon Phase:</b> ${moonPct.toFixed(1)}%<br>` +
+              `<b>⏱ Visibility:</b> ${visibilityHours.toFixed(2)} h<br>` +
+              `<b>🌅 Astro Dusk:</b> ${duskLocal}<br>` +
+              `<b>🌄 Astro Dawn:</b> ${dawnLocal}`,
             showarrow: false,
-            font: { size: 12 },
-            bgcolor: "rgba(255,255,255,0.8)",
-            bordercolor: "#888",
+            font: { family: "Inter, system-ui, sans-serif", size: 12 },
+            bgcolor: "rgba(15,15,35,0.8)",
+            bordercolor: "rgba(0,210,255,0.3)",
             borderwidth: 1,
+            borderpad: 8,
             xanchor: "left",
-            yanchor: "top",
+            yanchor: "bottom",
           },
         ],
         xaxis: {
-          title: `Local Time [${tz}]`,
+          title: { text: `Local Time [${tz}]`, font: { family: "Inter, system-ui, sans-serif", size: 13 } },
           type: "date",
-          tickformat: "%Y-%m-%d %H:%M",
+          tickformat: "%H:%M",
+          gridcolor: "rgba(128,128,128,0.15)",
+          griddash: "dot",
+          linecolor: "rgba(128,128,128,0.3)",
+          tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
         },
-        yaxis: { title: "Altitude (°)" },
+        yaxis: {
+          title: { text: "Altitude (°)", font: { family: "Inter, system-ui, sans-serif", size: 13 } },
+          gridcolor: "rgba(128,128,128,0.15)",
+          griddash: "dot",
+          linecolor: "rgba(128,128,128,0.3)",
+          zeroline: true,
+          zerolinecolor: "rgba(128,128,128,0.3)",
+          tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
+        },
         hovermode: "x unified",
-        template: "plotly_white",
+        hoverlabel: {
+          bgcolor: "rgba(20,20,40,0.9)",
+          bordercolor: "rgba(0,210,255,0.5)",
+          font: { family: "Inter, system-ui, sans-serif", size: 12, color: "#e0e0e0" },
+        },
+        legend: {
+          font: { family: "Inter, system-ui, sans-serif", size: 12 },
+          bgcolor: "rgba(0,0,0,0)",
+          borderwidth: 0,
+          orientation: "h",
+          x: 0.5,
+          xanchor: "center",
+          y: -0.18,
+        },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
         height: 600,
+        margin: { t: 70, r: 30, b: 80, l: 60 },
       },
     });
   };
@@ -887,11 +1035,10 @@ export default function SkyObservationApp() {
 
   return (
     <div
-      className={`h-screen w-screen font-sans p-2 overflow-hidden transition-all duration-300 ${
-        theme === "dark"
-          ? "bg-transparent text-white"
-          : "bg-transparent text-black"
-      }`}
+      className={`h-screen w-screen font-sans p-2 overflow-hidden flex flex-col transition-all duration-300 ${theme === "dark"
+        ? "bg-transparent text-white"
+        : "bg-transparent text-black"
+        }`}
     >
       {/* Background canvas for animated stars/clouds */}
       <canvas
@@ -912,17 +1059,15 @@ export default function SkyObservationApp() {
       <div className="flex justify-end items-center mb-2 pr-2">
         <button
           onClick={toggleTheme}
-          className={`relative inline-flex items-center justify-center w-14 h-8 rounded-full transition-colors duration-300 focus:outline-none ${
-            theme === "dark" ? "bg-cyan-600" : "bg-yellow-400"
-          }`}
+          className={`relative inline-flex items-center justify-center w-14 h-8 rounded-full transition-colors duration-300 focus:outline-none ${theme === "dark" ? "bg-cyan-600" : "bg-yellow-400"
+            }`}
           title="Toggle Theme"
         >
           <span
-            className={`absolute left-1 top-1 w-6 h-6 rounded-full text-sm flex items-center justify-center transition-transform duration-300 ${
-              theme === "dark"
-                ? "translate-x-6 bg-white text-yellow-500"
-                : "translate-x-0 bg-white text-indigo-700"
-            }`}
+            className={`absolute left-1 top-1 w-6 h-6 rounded-full text-sm flex items-center justify-center transition-transform duration-300 ${theme === "dark"
+              ? "translate-x-6 bg-white text-yellow-500"
+              : "translate-x-0 bg-white text-indigo-700"
+              }`}
           >
             {theme === "dark" ? "🌙" : "☀️"}
           </span>
@@ -930,29 +1075,19 @@ export default function SkyObservationApp() {
       </div>
 
       {/* Grid Layout: Left = Input Panel, Right = Plot */}
-      <div className="h-full w-full grid grid-cols-[300px_1fr] gap-4">
+      <div className="flex-1 min-h-0 w-full grid grid-cols-[300px_1fr] gap-4">
         {/* LEFT PANEL: Options */}
         <div className="overflow-y-auto pr-2">
-          <h1 className="text-2xl font-bold mb-4 text-cyan-400">🔭 Options</h1>
 
-          {/* OCR Upload */}
-          <div className="mb-4">
-            <label className="block text-sm font-semibold mb-1">
-              Upload Screenshot with RA/DEC:
-            </label>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleImageUpload}
-              className="file:bg-cyan-600 file:text-white file:rounded-md file:px-3 file:py-1 file:border-0 file:cursor-pointer hover:file:bg-cyan-500"
-            />
-          </div>
+          <h1 className="text-2xl font-bold mb-5 bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
+            🔭 Astro Target Altimeter
+          </h1>
 
           {/* Location */}
-          <div className="mb-4">
-            <StyledLocationButton onClick={handleUseCurrentLocation}>
-              Use My Location
-            </StyledLocationButton>
+          <div className="mb-4 text-center">
+            <StyledGenerateButton onClick={handleUseCurrentLocation}>
+              📍 Use My Location
+            </StyledGenerateButton>
           </div>
 
           {/* Inputs */}
@@ -969,11 +1104,10 @@ export default function SkyObservationApp() {
                 value={value}
                 onChange={(e) => setter(e.target.value)}
                 className={`w-full px-3 py-1 text-sm rounded border focus:outline-none focus:ring-2 focus:ring-cyan-400
-        ${
-          theme === "dark"
-            ? "bg-gray-800 border-cyan-600 text-white"
-            : "bg-gray-100 border-gray-400 text-black"
-        }
+        ${theme === "dark"
+                    ? "bg-gray-800 border-cyan-600 text-white"
+                    : "bg-gray-100 border-gray-400 text-black"
+                  }
       `}
               />
             </div>
@@ -984,15 +1118,15 @@ export default function SkyObservationApp() {
             <label className="block text-sm mb-1">Select Time Range:</label>
             <select
               className={`w-full px-3 py-1 text-sm rounded border focus:outline-none focus:ring-2 focus:ring-cyan-400
-      ${
-        theme === "dark"
-          ? "bg-gray-800 border-indigo-500 text-white"
-          : "bg-gray-100 border-gray-400 text-black"
-      }
+      ${theme === "dark"
+                  ? "bg-gray-800 border-indigo-500 text-white"
+                  : "bg-gray-100 border-gray-400 text-black"
+                }
     `}
               value={preset}
               onChange={(e) => setPreset(e.target.value as any)}
             >
+              <option value="lastNight">Last Night</option>
               <option value="last24">Next Night</option>
               <option value="next7">Next 7 Nights</option>
               <option value="next365">Next 15 Nights</option>
@@ -1034,11 +1168,10 @@ export default function SkyObservationApp() {
               value={customHorizon}
               onChange={(e) => setCustomHorizon(e.target.value)}
               className={`w-full px-3 py-1 text-sm rounded border focus:outline-none focus:ring-2 focus:ring-cyan-400
-    ${
-      theme === "dark"
-        ? "bg-gray-800 border-cyan-600 text-white"
-        : "bg-gray-100 border-gray-400 text-black"
-    }
+    ${theme === "dark"
+                  ? "bg-gray-800 border-cyan-600 text-white"
+                  : "bg-gray-100 border-gray-400 text-black"
+                }
   `}
             />
           </div>
@@ -1050,6 +1183,150 @@ export default function SkyObservationApp() {
             </StyledGenerateButton>
           </div>
 
+          {/* Moon Phase Widget */}
+          {(() => {
+            const moonPhaseRef = React.useRef<HTMLCanvasElement>(null);
+            const now = Astronomy.MakeTime(new Date());
+            const phaseAngle = Astronomy.MoonPhase(now); // 0-360
+            const illum = Astronomy.Illumination(Astronomy.Body.Moon, now);
+            const phaseFraction = illum.phase_fraction;
+            const phasePct = (phaseFraction * 100).toFixed(1);
+
+            // Phase name
+            let phaseName = "";
+            if (phaseAngle < 5 || phaseAngle >= 355) phaseName = "New Moon";
+            else if (phaseAngle < 85) phaseName = "Waxing Crescent";
+            else if (phaseAngle < 95) phaseName = "First Quarter";
+            else if (phaseAngle < 175) phaseName = "Waxing Gibbous";
+            else if (phaseAngle < 185) phaseName = "Full Moon";
+            else if (phaseAngle < 265) phaseName = "Waning Gibbous";
+            else if (phaseAngle < 275) phaseName = "Last Quarter";
+            else phaseName = "Waning Crescent";
+
+            React.useEffect(() => {
+              const canvas = moonPhaseRef.current;
+              if (!canvas) return;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) return;
+
+              const size = 120;
+              canvas.width = size;
+              canvas.height = size;
+              const cx = size / 2;
+              const cy = size / 2;
+              const r = 48;
+
+              ctx.clearRect(0, 0, size, size);
+
+              // Outer glow
+              ctx.beginPath();
+              ctx.arc(cx, cy, r + 4, 0, 2 * Math.PI);
+              ctx.fillStyle = theme === "dark"
+                ? "rgba(200,200,180,0.06)"
+                : "rgba(0,0,0,0.04)";
+              ctx.fill();
+
+              // Dark moon base
+              ctx.beginPath();
+              ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+              const darkGrad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
+              darkGrad.addColorStop(0, theme === "dark" ? "#333" : "#bbb");
+              darkGrad.addColorStop(1, theme === "dark" ? "#1a1a1a" : "#999");
+              ctx.fillStyle = darkGrad;
+              ctx.fill();
+
+              // Lit moon gradient
+              const litGrad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.2, 0, cx, cy, r);
+              litGrad.addColorStop(0, "#fff");
+              litGrad.addColorStop(0.3, "#f0ede0");
+              litGrad.addColorStop(0.7, "#d8d4c4");
+              litGrad.addColorStop(1, "#c0bba8");
+
+              const angle = phaseAngle;
+              const cosA = Math.cos((angle * Math.PI) / 180);
+              const absCos = Math.abs(cosA);
+
+              // Scanline rendering for accurate phase
+              for (let dy = -r; dy <= r; dy += 0.5) {
+                const xEdge = Math.sqrt(r * r - dy * dy);
+                const xTerm = absCos * xEdge;
+
+                let leftX: number, rightX: number;
+
+                if (angle <= 180) {
+                  // Waxing: right side lit
+                  if (cosA >= 0) {
+                    // Crescent: lit from terminator to right edge
+                    leftX = xTerm;
+                    rightX = xEdge;
+                  } else {
+                    // Gibbous: lit from -terminator to right edge
+                    leftX = -xTerm;
+                    rightX = xEdge;
+                  }
+                } else {
+                  // Waning: left side lit
+                  if (cosA <= 0) {
+                    // Gibbous: lit from left edge to terminator
+                    leftX = -xEdge;
+                    rightX = xTerm;
+                  } else {
+                    // Crescent: lit from left edge to -terminator
+                    leftX = -xEdge;
+                    rightX = -xTerm;
+                  }
+                }
+
+                const w = rightX - leftX;
+                if (w > 0) {
+                  ctx.fillStyle = litGrad;
+                  ctx.fillRect(cx + leftX, cy + dy, w, 0.8);
+                }
+              }
+
+              // Crater details for realism
+              const craters = [
+                { x: 0.15, y: -0.2, s: 0.12, a: 0.15 },
+                { x: -0.25, y: 0.1, s: 0.18, a: 0.12 },
+                { x: 0.3, y: 0.25, s: 0.1, a: 0.1 },
+                { x: -0.1, y: -0.35, s: 0.08, a: 0.13 },
+                { x: 0.05, y: 0.35, s: 0.14, a: 0.1 },
+              ];
+              craters.forEach((c) => {
+                ctx.beginPath();
+                ctx.arc(cx + c.x * r, cy + c.y * r, c.s * r, 0, 2 * Math.PI);
+                ctx.fillStyle = `rgba(100,100,90,${c.a})`;
+                ctx.fill();
+              });
+
+              // Rim highlight
+              ctx.beginPath();
+              ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+              ctx.strokeStyle = theme === "dark"
+                ? "rgba(200,200,180,0.2)"
+                : "rgba(0,0,0,0.1)";
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+            }, [phaseAngle, theme]);
+
+            return (
+              <div className="mb-4 flex flex-col items-center">
+                <canvas
+                  ref={moonPhaseRef}
+                  width={120}
+                  height={120}
+                  style={{ imageRendering: "auto" }}
+                />
+                <p className={`text-sm font-semibold mt-1 ${theme === "dark" ? "text-cyan-300" : "text-indigo-600"}`}>
+                  {phaseName}
+                </p>
+                <p className={`text-xs ${theme === "dark" ? "text-gray-400" : "text-gray-500"}`}>
+                  {phasePct}% illuminated
+                </p>
+              </div>
+            );
+          })()}
+
           {/* Errors & Loading */}
           {error && <p className="text-red-500 text-xs">{error}</p>}
           {loading && (
@@ -1058,17 +1335,67 @@ export default function SkyObservationApp() {
         </div>
 
         {/* RIGHT PANEL: Plot */}
-        <div className="overflow-hidden">
+        <div className="overflow-hidden h-full min-h-[500px]">
           {plotData.data.length > 0 ? (
             <Plot
               data={plotData.data}
               layout={{
                 ...plotData.layout,
-                template: theme === "dark" ? "plotly_dark" : "plotly_white",
+                paper_bgcolor: "rgba(0,0,0,0)",
+                plot_bgcolor: "rgba(0,0,0,0)",
+                font: {
+                  color: theme === "dark" ? "#e0e0e0" : "#2d2d2d",
+                  family: "Inter, system-ui, sans-serif",
+                },
+                xaxis: {
+                  ...plotData.layout.xaxis,
+                  color: theme === "dark" ? "#b0b0b0" : "#555",
+                  gridcolor: theme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+                },
+                yaxis: {
+                  ...plotData.layout.yaxis,
+                  color: theme === "dark" ? "#b0b0b0" : "#555",
+                  gridcolor: theme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+                },
+                hoverlabel: {
+                  ...plotData.layout.hoverlabel,
+                  bgcolor: theme === "dark" ? "rgba(20,20,40,0.92)" : "rgba(255,255,255,0.95)",
+                  bordercolor: theme === "dark" ? "rgba(0,210,255,0.5)" : "rgba(100,100,100,0.3)",
+                  font: {
+                    family: "Inter, system-ui, sans-serif",
+                    size: 12,
+                    color: theme === "dark" ? "#e0e0e0" : "#333",
+                  },
+                },
+                annotations: (plotData.layout.annotations || []).map((ann: any) => ({
+                  ...ann,
+                  font: {
+                    ...(ann.font || {}),
+                    color: ann.font?.color || (theme === "dark" ? "#e0e0e0" : "#333"),
+                  },
+                  bgcolor: ann.bgcolor || (theme === "dark" ? "rgba(15,15,35,0.8)" : "rgba(255,255,255,0.9)"),
+                  bordercolor: ann.bordercolor || (theme === "dark" ? "rgba(0,210,255,0.3)" : "rgba(100,100,100,0.3)"),
+                })),
+                legend: {
+                  ...plotData.layout.legend,
+                  font: {
+                    family: "Inter, system-ui, sans-serif",
+                    size: 12,
+                    color: theme === "dark" ? "#c0c0c0" : "#444",
+                  },
+                },
+                autosize: false,
+                width: chartWidth,
+                height: chartHeight,
               }}
-              useResizeHandler
-              style={{ width: "100%", height: "100%" }}
-              className="w-full h-full"
+              config={{
+                displayModeBar: true,
+                modeBarButtonsToRemove: ["lasso2d", "select2d"],
+                displaylogo: false,
+                responsive: true,
+              }}
+              style={{ width: chartWidth, height: chartHeight }}
+              className="w-full"
             />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400 text-sm italic">
