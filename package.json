@@ -2,6 +2,7 @@
   "name": "react-vite-ts",
   "private": true,
   "version": "0.0.0",
+  "packageManager": "pnpm@8.15.9",
   "homepage": "https://sahilpurabiya.github.io/AstroTargetAltimeter",
   "type": "module",
   "scripts": {
