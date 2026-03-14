@@ -1,3 +1,61 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* Scrollbar styling for left panel */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(79, 193, 233, 0.2);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(79, 193, 233, 0.4);
+}
+
+/* Focus styles for inputs */
+input:focus, select:focus {
+  border-color: #4FC1E9 !important;
+  box-shadow: 0 0 0 2px rgba(79, 193, 233, 0.15);
+}
+
+/* Button hover micro-animations */
+button {
+  transition: all 0.2s ease;
+}
+button:hover {
+  transform: translateY(-1px);
+}
+button:active {
+  transform: translateY(0px);
+}
+
+/* Mobile responsive overrides */
+@media (max-width: 768px) {
+  body {
+    overflow: auto;
+  }
+  .plotly .modebar {
+    display: none !important;
+  }
+}
+
+/* Date range picker theme overrides */
+.rdrCalendarWrapper {
+  font-family: 'Inter', system-ui, sans-serif !important;
+}
