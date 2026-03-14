@@ -1,9 +1,5 @@
 // @ts-nocheck
-// Dependencies: astronomy-engine, plotly.js, react-plotly.js, tesseract.js, luxon, tz-lookup, react-date-range, date-fns
-// Install via:
-// npm install astronomy-engine plotly.js react-plotly.js tesseract.js luxon tz-lookup react-date-range date-fns
-
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Plot from "react-plotly.js";
 import Tesseract from "tesseract.js";
 import * as Astronomy from "astronomy-engine";
@@ -13,6 +9,7 @@ import { DateRangePicker } from "react-date-range";
 import {
   addDays,
   subDays,
+  addMonths,
   startOfDay,
   endOfDay,
   differenceInMinutes,
@@ -120,20 +117,191 @@ const StyledLocationButton = styled.button`
   }
 `;
 
+const ThemeSwitchWrapper = styled.div`
+  .theme-switch {
+    --toggle-size: 12px;
+    --container-width: 5.625em;
+    --container-height: 2.5em;
+    --container-radius: 6.25em;
+    --container-light-bg: #3D7EAE;
+    --container-night-bg: #1D1F2C;
+    --circle-container-diameter: 3.375em;
+    --sun-moon-diameter: 2.125em;
+    --sun-bg: #ECCA2F;
+    --moon-bg: #C4C9D1;
+    --spot-color: #959DB1;
+    --circle-container-offset: calc((var(--circle-container-diameter) - var(--container-height)) / 2 * -1);
+    --stars-color: #fff;
+    --clouds-color: #F3FDFF;
+    --back-clouds-color: #AACADF;
+    --transition: .5s cubic-bezier(0, -0.02, 0.4, 1.25);
+    --circle-transition: .3s cubic-bezier(0, -0.02, 0.35, 1.17);
+  }
+
+  .theme-switch, .theme-switch *, .theme-switch *::before, .theme-switch *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-size: var(--toggle-size);
+  }
+
+  .theme-switch__container {
+    width: var(--container-width);
+    height: var(--container-height);
+    background-color: var(--container-light-bg);
+    border-radius: var(--container-radius);
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: 0em -0.062em 0.062em rgba(0, 0, 0, 0.25), 0em 0.062em 0.125em rgba(255, 255, 255, 0.94);
+    transition: var(--transition);
+    position: relative;
+  }
+
+  .theme-switch__container::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    box-shadow: 0em 0.05em 0.187em rgba(0, 0, 0, 0.25) inset, 0em 0.05em 0.187em rgba(0, 0, 0, 0.25) inset;
+    border-radius: var(--container-radius);
+  }
+
+  .theme-switch__checkbox {
+    display: none;
+  }
+
+  .theme-switch__circle-container {
+    width: var(--circle-container-diameter);
+    height: var(--circle-container-diameter);
+    background-color: rgba(255, 255, 255, 0.1);
+    position: absolute;
+    left: var(--circle-container-offset);
+    top: var(--circle-container-offset);
+    border-radius: var(--container-radius);
+    box-shadow: inset 0 0 0 3.375em rgba(255, 255, 255, 0.1), inset 0 0 0 3.375em rgba(255, 255, 255, 0.1), 0 0 0 0.625em rgba(255, 255, 255, 0.1), 0 0 0 1.25em rgba(255, 255, 255, 0.1);
+    display: flex;
+    transition: var(--circle-transition);
+    pointer-events: none;
+  }
+
+  .theme-switch__sun-moon-container {
+    pointer-events: auto;
+    position: relative;
+    z-index: 2;
+    width: var(--sun-moon-diameter);
+    height: var(--sun-moon-diameter);
+    margin: auto;
+    border-radius: var(--container-radius);
+    background-color: var(--sun-bg);
+    box-shadow: 0.062em 0.062em 0.062em 0em rgba(254, 255, 239, 0.61) inset, 0em -0.062em 0.062em 0em #a1872a inset;
+    filter: drop-shadow(0.062em 0.125em 0.125em rgba(0, 0, 0, 0.25)) drop-shadow(0em 0.062em 0.125em rgba(0, 0, 0, 0.25));
+    overflow: hidden;
+    transition: var(--transition);
+  }
+
+  .theme-switch__moon {
+    transform: translateX(100%);
+    width: 100%;
+    height: 100%;
+    background-color: var(--moon-bg);
+    border-radius: inherit;
+    box-shadow: 0.062em 0.062em 0.062em 0em rgba(254, 255, 239, 0.61) inset, 0em -0.062em 0.062em 0em #969696 inset;
+    transition: var(--transition);
+    position: relative;
+  }
+
+  .theme-switch__spot {
+    position: absolute;
+    top: 0.75em;
+    left: 0.312em;
+    width: 0.75em;
+    height: 0.75em;
+    border-radius: var(--container-radius);
+    background-color: var(--spot-color);
+    box-shadow: 0em 0.0312em 0.062em rgba(0, 0, 0, 0.25) inset;
+  }
+
+  .theme-switch__spot:nth-of-type(2) {
+    width: 0.375em;
+    height: 0.375em;
+    top: 0.937em;
+    left: 1.375em;
+  }
+
+  .theme-switch__spot:nth-last-of-type(3) {
+    width: 0.25em;
+    height: 0.25em;
+    top: 0.312em;
+    left: 0.812em;
+  }
+
+  .theme-switch__clouds {
+    width: 1.25em;
+    height: 1.25em;
+    background-color: var(--clouds-color);
+    border-radius: var(--container-radius);
+    position: absolute;
+    bottom: -0.625em;
+    left: 0.312em;
+    box-shadow: 0.937em 0.312em var(--clouds-color), -0.312em -0.312em var(--back-clouds-color), 1.437em 0.375em var(--clouds-color), 0.5em -0.125em var(--back-clouds-color), 2.187em 0 var(--clouds-color), 1.25em -0.062em var(--back-clouds-color), 2.937em 0.312em var(--clouds-color), 2em -0.312em var(--back-clouds-color), 3.625em -0.062em var(--clouds-color), 2.625em 0em var(--back-clouds-color), 4.5em -0.312em var(--clouds-color), 3.375em -0.437em var(--back-clouds-color), 4.625em -1.75em 0 0.437em var(--clouds-color), 4em -0.625em var(--back-clouds-color), 4.125em -2.125em 0 0.437em var(--back-clouds-color);
+    transition: 0.5s cubic-bezier(0, -0.02, 0.4, 1.25);
+  }
+
+  .theme-switch__stars-container {
+    position: absolute;
+    color: var(--stars-color);
+    top: -100%;
+    left: 0.312em;
+    width: 2.75em;
+    height: auto;
+    transition: var(--transition);
+  }
+
+  .theme-switch__checkbox:checked + .theme-switch__container {
+    background-color: var(--container-night-bg);
+  }
+
+  .theme-switch__checkbox:checked + .theme-switch__container .theme-switch__circle-container {
+    left: calc(100% - var(--circle-container-offset) - var(--circle-container-diameter));
+  }
+
+  .theme-switch__checkbox:checked + .theme-switch__container .theme-switch__circle-container:hover {
+    left: calc(100% - var(--circle-container-offset) - var(--circle-container-diameter) - 0.187em);
+  }
+
+  .theme-switch__circle-container:hover {
+    left: calc(var(--circle-container-offset) + 0.187em);
+  }
+
+  .theme-switch__checkbox:checked + .theme-switch__container .theme-switch__moon {
+    transform: translate(0);
+  }
+
+  .theme-switch__checkbox:checked + .theme-switch__container .theme-switch__clouds {
+    bottom: -4.062em;
+  }
+
+  .theme-switch__checkbox:checked + .theme-switch__container .theme-switch__stars-container {
+    top: 50%;
+    transform: translateY(-50%);
+  }
+`;
+
 export default function SkyObservationApp() {
-  // ✅ Always starts at tomorrow 6 PM to day-after 6 AM
+  // Tonight: today 6 PM → tomorrow 6 AM
+  const getTonightRange = () => {
+    const today = new Date();
+    const startDate = setHours(setMinutes(setSeconds(today, 0), 0), 18);
+    const endDate = setHours(setMinutes(setSeconds(addDays(today, 1), 0), 0), 6);
+    return { startDate, endDate, key: "selection" };
+  };
+
+  // Next night: tomorrow 6 PM → day-after 6 AM
   const getNightRange = () => {
     const tomorrow = addDays(new Date(), 1);
-    const startDate = setHours(setMinutes(setSeconds(tomorrow, 0), 0), 18); // 6 PM tomorrow
-    const endDate = setHours(
-      setMinutes(setSeconds(addDays(tomorrow, 1), 0), 0),
-      6
-    ); // 6 AM day after
-    return {
-      startDate,
-      endDate,
-      key: "selection",
-    };
+    const startDate = setHours(setMinutes(setSeconds(tomorrow, 0), 0), 18);
+    const endDate = setHours(setMinutes(setSeconds(addDays(tomorrow, 1), 0), 0), 6);
+    return { startDate, endDate, key: "selection" };
   };
 
   // Last night: yesterday 6 PM → today 6 AM
@@ -142,17 +310,12 @@ export default function SkyObservationApp() {
     const yesterday = subDays(today, 1);
     const startDate = setHours(setMinutes(setSeconds(yesterday, 0), 0), 18);
     const endDate = setHours(setMinutes(setSeconds(today, 0), 0), 6);
-    return {
-      startDate,
-      endDate,
-      key: "selection",
-    };
+    return { startDate, endDate, key: "selection" };
   };
 
   // --- State hooks ---
   const canvasRef = React.useRef(null);
 
-  // Load persisted values from localStorage
   const loadSaved = (key: string, fallback: string) => {
     try { return localStorage.getItem(`ata_${key}`) || fallback; } catch { return fallback; }
   };
@@ -162,11 +325,28 @@ export default function SkyObservationApp() {
   const [latitude, setLatitude] = useState(() => loadSaved("lat", ""));
   const [longitude, setLongitude] = useState(() => loadSaved("lon", ""));
 
-  // Define the preset options
-  type PresetOption = "lastNight" | "nextNight" | "next7" | "next15" | "custom";
+  // Coordinate format: "hms" = HHMMSS/DDMMSS, "deg" = decimal degrees
+  const [coordFormat, setCoordFormat] = useState<"hms" | "deg">("hms");
 
-  // Default preset
-  const [preset, setPreset] = useState<PresetOption>(() => loadSaved("preset", "nextNight") as PresetOption);
+  // SIMBAD search
+  const [simbadQuery, setSimbadQuery] = useState("");
+  const [simbadResults, setSimbadResults] = useState<any[]>([]);
+  const [simbadLoading, setSimbadLoading] = useState(false);
+
+  // Best observation time
+  const [bestObsTime, setBestObsTime] = useState<{ time: string; alt: string; sep: string } | null>(null);
+
+  // Mobile detection
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  type PresetOption = "tonight" | "lastNight" | "nextNight" | "next7" | "next15" | "next6months" | "nextYear" | "custom";
+
+  const [preset, setPreset] = useState<PresetOption>(() => loadSaved("preset", "tonight") as PresetOption);
 
   // Set initial range based on default preset
   const [range, setRange] = useState(() => [getNightRange()]);
@@ -187,8 +367,9 @@ export default function SkyObservationApp() {
     dec: string;
     lat: string;
     lon: string;
+    horizon: string;
     general: string;
-  }>({ ra: "", dec: "", lat: "", lon: "", general: "" });
+  }>({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
 
   // Persist inputs to localStorage
   useEffect(() => {
@@ -228,7 +409,6 @@ export default function SkyObservationApp() {
     { name: "Betelgeuse (α Ori)", ra: "055510", dec: "+072425" },
     { name: "Sirius (α CMa)", ra: "064509", dec: "-164258" },
     { name: "Vega (α Lyr)", ra: "183656", dec: "+384701" },
-    { name: "Polaris (α UMi)", ra: "023132", dec: "+892150" },
   ];
 
   const handleRandomTarget = () => {
@@ -236,7 +416,55 @@ export default function SkyObservationApp() {
     setRa(target.ra);
     setDec(target.dec);
     setTargetName(target.name);
-    setFieldErrors({ ra: "", dec: "", lat: "", lon: "", general: "" });
+    setCoordFormat("hms");
+    setFieldErrors({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
+  };
+
+  // SIMBAD name resolver
+  const handleSimbadSearch = useCallback(async () => {
+    const q = simbadQuery.trim();
+    if (!q) return;
+    setSimbadLoading(true);
+    setSimbadResults([]);
+    try {
+      const res = await fetch(`https://simbad.u-strasbg.fr/simbad/sim-nameresolver?Ident=${encodeURIComponent(q)}&output=json`);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        setSimbadResults(data);
+      } else {
+        setSimbadResults([]);
+        setFieldErrors(prev => ({ ...prev, general: `No results found for "${q}".` }));
+      }
+    } catch {
+      setFieldErrors(prev => ({ ...prev, general: "SIMBAD search failed. Check your connection." }));
+    } finally {
+      setSimbadLoading(false);
+    }
+  }, [simbadQuery]);
+
+  const handleSimbadSelect = (result: any) => {
+    const raDeg = result.ra;
+    const decDeg = result.dec;
+    // Convert RA degrees to HHMMSS
+    const raH = raDeg / 15;
+    const raHH = Math.floor(raH);
+    const raMM = Math.floor((raH - raHH) * 60);
+    const raSS = Math.floor(((raH - raHH) * 60 - raMM) * 60);
+    const raStr = String(raHH).padStart(2, '0') + String(raMM).padStart(2, '0') + String(raSS).padStart(2, '0');
+    // Convert DEC degrees to ±DDMMSS
+    const decSign = decDeg >= 0 ? '+' : '-';
+    const absDec = Math.abs(decDeg);
+    const decDD = Math.floor(absDec);
+    const decMM = Math.floor((absDec - decDD) * 60);
+    const decSS = Math.floor(((absDec - decDD) * 60 - decMM) * 60);
+    const decStr = decSign + String(decDD).padStart(2, '0') + String(decMM).padStart(2, '0') + String(decSS).padStart(2, '0');
+    setRa(raStr);
+    setDec(decStr);
+    setTargetName(result.name || simbadQuery);
+    setCoordFormat("hms");
+    setSimbadResults([]);
+    setSimbadQuery("");
+    setFieldErrors({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
   };
 
   // Theme state with system auto-detection
@@ -259,18 +487,22 @@ export default function SkyObservationApp() {
 
   // --- Helpers ---
   const pad2 = (n: number) => (n < 10 ? "0" + n : "" + n);
-  const parseRA = (s: string) =>
-    parseInt(s.slice(0, 2)) +
-    parseInt(s.slice(2, 4)) / 60 +
-    parseInt(s.slice(4, 6)) / 3600;
-  const parseDec = (s: string) => {
+
+  // Parse RA: supports HMS (HHMMSS) or decimal degrees
+  const parseRA = (s: string, format: "hms" | "deg"): number => {
+    if (format === "deg") {
+      return parseFloat(s) / 15; // degrees to hours
+    }
+    return parseInt(s.slice(0, 2)) + parseInt(s.slice(2, 4)) / 60 + parseInt(s.slice(4, 6)) / 3600;
+  };
+
+  // Parse DEC: supports DMS (±DDMMSS) or decimal degrees
+  const parseDec = (s: string, format: "hms" | "deg"): number => {
+    if (format === "deg") {
+      return parseFloat(s);
+    }
     const sign = s[0] === "-" ? -1 : 1;
-    return (
-      sign *
-      (parseInt(s.slice(1, 3)) +
-        parseInt(s.slice(3, 5)) / 60 +
-        parseInt(s.slice(5, 7)) / 3600)
-    );
+    return sign * (parseInt(s.slice(1, 3)) + parseInt(s.slice(3, 5)) / 60 + parseInt(s.slice(5, 7)) / 3600);
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -326,38 +558,24 @@ export default function SkyObservationApp() {
   // Update range when preset changes:
   useEffect(() => {
     const now = new Date();
+    const close = () => { setCustomRangeTouched(false); setShowPicker(false); };
 
-    if (preset === "lastNight") {
-      setRange([getLastNightRange()]);
-      setCustomRangeTouched(false);
-      setShowPicker(false);
+    if (preset === "tonight") {
+      setRange([getTonightRange()]); close();
+    } else if (preset === "lastNight") {
+      setRange([getLastNightRange()]); close();
     } else if (preset === "nextNight") {
-      setRange([getNightRange(now)]); // sets start: tomorrow 18:00, end: day after tomorrow 06:00
-      setCustomRangeTouched(false);
-      setShowPicker(false);
+      setRange([getNightRange()]); close();
     } else if (preset === "next7") {
-      setRange([
-        {
-          startDate: now,
-          endDate: addDays(now, 6),
-          key: "selection",
-        },
-      ]);
-      setCustomRangeTouched(false);
-      setShowPicker(false);
+      setRange([{ startDate: now, endDate: addDays(now, 6), key: "selection" }]); close();
     } else if (preset === "next15") {
-      setRange([
-        {
-          startDate: now,
-          endDate: addDays(now, 14),
-          key: "selection",
-        },
-      ]);
-      setCustomRangeTouched(false);
-      setShowPicker(false);
+      setRange([{ startDate: now, endDate: addDays(now, 14), key: "selection" }]); close();
+    } else if (preset === "next6months") {
+      setRange([{ startDate: now, endDate: addMonths(now, 6), key: "selection" }]); close();
+    } else if (preset === "nextYear") {
+      setRange([{ startDate: now, endDate: addMonths(now, 12), key: "selection" }]); close();
     } else if (preset === "custom") {
-      setCustomRangeTouched(true);
-      setShowPicker(true);
+      setCustomRangeTouched(true); setShowPicker(true);
     }
   }, [preset]);
 
@@ -369,50 +587,55 @@ export default function SkyObservationApp() {
   // --- Main plotting function ---
   const renderChart = () => {
     // Clear all field errors
-    const errors = { ra: "", dec: "", lat: "", lon: "", general: "" };
+    const errors = { ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" };
     let hasError = false;
 
     try {
 
       // --- Comprehensive per-field validation ---
-
-      // RA validation
-      const raTrimmed = ra.trim();
-      if (!raTrimmed) {
-        errors.ra = "RA is required.";
-        hasError = true;
-      } else if (!/^\d{6}$/.test(raTrimmed)) {
-        errors.ra = "RA must be exactly 6 digits (HHMMSS).";
-        hasError = true;
-      } else {
-        const hh = parseInt(raTrimmed.slice(0, 2));
-        const mm = parseInt(raTrimmed.slice(2, 4));
-        const ss = parseInt(raTrimmed.slice(4, 6));
-        if (hh > 23) { errors.ra = `Hours must be 00-23 (got ${hh}).`; hasError = true; }
-        else if (mm > 59) { errors.ra = `Minutes must be 00-59 (got ${mm}).`; hasError = true; }
-        else if (ss > 59) { errors.ra = `Seconds must be 00-59 (got ${ss}).`; hasError = true; }
-      }
-
-      // DEC validation
       let correctedDec = dec.trim();
-      if (!correctedDec) {
-        errors.dec = "DEC is required.";
-        hasError = true;
-      } else {
-        if (!correctedDec.startsWith("+") && !correctedDec.startsWith("-")) {
-          correctedDec = "+" + correctedDec;
+
+      if (coordFormat === "deg") {
+        // Degree format validation
+        const raTrimmed = ra.trim();
+        if (!raTrimmed) { errors.ra = "RA is required."; hasError = true; }
+        else {
+          const raVal = parseFloat(raTrimmed);
+          if (isNaN(raVal)) { errors.ra = "Must be a number (degrees)."; hasError = true; }
+          else if (raVal < 0 || raVal >= 360) { errors.ra = "RA must be between 0 and 360°."; hasError = true; }
         }
-        if (!/^[+\-]\d{6}$/.test(correctedDec)) {
-          errors.dec = "DEC must be ±DDMMSS (6 digits with sign).";
-          hasError = true;
-        } else {
-          const dd = parseInt(correctedDec.slice(1, 3));
-          const mm = parseInt(correctedDec.slice(3, 5));
-          const ss = parseInt(correctedDec.slice(5, 7));
-          if (dd > 90) { errors.dec = `Degrees must be 00-90 (got ${dd}).`; hasError = true; }
-          else if (dd === 90 && (mm > 0 || ss > 0)) { errors.dec = "DEC cannot exceed ±90°00'00\"."; hasError = true; }
-          else if (mm > 59) { errors.dec = `Minutes must be 00-59 (got ${mm}).`; hasError = true; }
-          else if (ss > 59) { errors.dec = `Seconds must be 00-59 (got ${ss}).`; hasError = true; }
+        if (!correctedDec) { errors.dec = "DEC is required."; hasError = true; }
+        else {
+          const decVal = parseFloat(correctedDec);
+          if (isNaN(decVal)) { errors.dec = "Must be a number (degrees)."; hasError = true; }
+          else if (decVal < -90 || decVal > 90) { errors.dec = "DEC must be between -90 and 90°."; hasError = true; }
+        }
+      } else {
+        // HMS/DMS format validation
+        const raTrimmed = ra.trim();
+        if (!raTrimmed) { errors.ra = "RA is required."; hasError = true; }
+        else if (!/^\d{6}$/.test(raTrimmed)) { errors.ra = "RA must be exactly 6 digits (HHMMSS)."; hasError = true; }
+        else {
+          const hh = parseInt(raTrimmed.slice(0, 2));
+          const mm = parseInt(raTrimmed.slice(2, 4));
+          const ss = parseInt(raTrimmed.slice(4, 6));
+          if (hh > 23) { errors.ra = `Hours must be 00-23 (got ${hh}).`; hasError = true; }
+          else if (mm > 59) { errors.ra = `Minutes must be 00-59 (got ${mm}).`; hasError = true; }
+          else if (ss > 59) { errors.ra = `Seconds must be 00-59 (got ${ss}).`; hasError = true; }
+        }
+        if (!correctedDec) { errors.dec = "DEC is required."; hasError = true; }
+        else {
+          if (!correctedDec.startsWith("+") && !correctedDec.startsWith("-")) correctedDec = "+" + correctedDec;
+          if (!/^[+\-]\d{6}$/.test(correctedDec)) { errors.dec = "DEC must be ±DDMMSS (6 digits with sign)."; hasError = true; }
+          else {
+            const dd = parseInt(correctedDec.slice(1, 3));
+            const mm = parseInt(correctedDec.slice(3, 5));
+            const ss = parseInt(correctedDec.slice(5, 7));
+            if (dd > 90) { errors.dec = `Degrees must be 00-90 (got ${dd}).`; hasError = true; }
+            else if (dd === 90 && (mm > 0 || ss > 0)) { errors.dec = "DEC cannot exceed ±90°00'00\"."; hasError = true; }
+            else if (mm > 59) { errors.dec = `Minutes must be 00-59 (got ${mm}).`; hasError = true; }
+            else if (ss > 59) { errors.dec = `Seconds must be 00-59 (got ${ss}).`; hasError = true; }
+          }
         }
       }
 
@@ -438,6 +661,16 @@ export default function SkyObservationApp() {
         else if (lonVal < -180 || lonVal > 180) { errors.lon = "Must be between -180 and 180."; hasError = true; }
       }
 
+      // Custom Horizon validation
+      const hzTrimmed = customHorizon.trim();
+      if (!hzTrimmed) {
+        errors.horizon = "Horizon is required."; hasError = true;
+      } else {
+        const hzVal = parseFloat(hzTrimmed);
+        if (isNaN(hzVal)) { errors.horizon = "Must be a number."; hasError = true; }
+        else if (hzVal < 0 || hzVal > 90) { errors.horizon = "Must be between 0° and 90°."; hasError = true; }
+      }
+
       // If any field has errors, update state and stop
       if (hasError) {
         setFieldErrors(errors);
@@ -445,9 +678,8 @@ export default function SkyObservationApp() {
       }
       setFieldErrors(errors); // clear all errors
 
-      const raH = parseRA(ra);
-
-      const decD = parseDec(correctedDec);
+      const raH = parseRA(ra, coordFormat);
+      const decD = parseDec(coordFormat === "deg" ? correctedDec : correctedDec, coordFormat);
 
       const latN = parseFloat(latitude),
         lonN = parseFloat(longitude);
@@ -547,16 +779,14 @@ export default function SkyObservationApp() {
               title: { text: "Date", font: { family: "Inter, system-ui, sans-serif", size: 13 } },
               type: "date",
               tickformat: "%b %d",
-              gridcolor: "rgba(128,128,128,0.15)",
-              griddash: "dot",
-              linecolor: "rgba(128,128,128,0.3)",
+              showgrid: false,
+                            linecolor: "rgba(128,128,128,0.3)",
               tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
             },
             yaxis: {
               title: { text: "Max Altitude (°)", font: { family: "Inter, system-ui, sans-serif", size: 13 } },
-              gridcolor: "rgba(128,128,128,0.15)",
-              griddash: "dot",
-              linecolor: "rgba(128,128,128,0.3)",
+              showgrid: false,
+                            linecolor: "rgba(128,128,128,0.3)",
               zeroline: true,
               zerolinecolor: "rgba(128,128,128,0.3)",
               tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
@@ -599,10 +829,15 @@ export default function SkyObservationApp() {
       // Arrays to collect altitudes
       const targetAlt: Array<number | null> = [];
       const moonAlt: Array<number | null> = [];
+      const moonAltRaw: number[] = [];
       const sunAlt: number[] = [];
       const hoverText: string[] = [];
+      const moonHoverText: string[] = [];
+      const sepArr: number[] = [];
       let minSep = Infinity;
       let peakIdx = 0;
+      let bestObsIdx = -1;
+      let bestObsScore = -Infinity;
 
       allTimes.forEach((jsDate, i) => {
         const t = Astronomy.MakeTime(jsDate);
@@ -615,38 +850,58 @@ export default function SkyObservationApp() {
         const mEq = Astronomy.Equator(Astronomy.Body.Moon, t, obs, true, true);
         const mH = Astronomy.Horizon(t, obs, mEq.ra, mEq.dec, "normal");
         moonAlt.push(mH.altitude >= 0 ? mH.altitude : null);
+        moonAltRaw.push(mH.altitude);
 
         // Sun
         const sEq = Astronomy.Equator(Astronomy.Body.Sun, t, obs, true, true);
         const sH = Astronomy.Horizon(t, obs, sEq.ra, sEq.dec, "normal");
         sunAlt.push(sH.altitude);
 
-        // Angular separation (target ↔ moon)
-        const ra1 = (raH * Math.PI) / 12,
-          dec1 = (decD * Math.PI) / 180;
-        const ra2 = (mEq.ra * Math.PI) / 12,
-          dec2 = (mEq.dec * Math.PI) / 180;
-        const cs =
-          Math.sin(dec1) * Math.sin(dec2) +
-          Math.cos(dec1) * Math.cos(dec2) * Math.cos(ra1 - ra2);
+        // Angular separation (target <-> moon)
+        const ra1 = (raH * Math.PI) / 12, dec1 = (decD * Math.PI) / 180;
+        const ra2 = (mEq.ra * Math.PI) / 12, dec2 = (mEq.dec * Math.PI) / 180;
+        const cs = Math.sin(dec1) * Math.sin(dec2) + Math.cos(dec1) * Math.cos(dec2) * Math.cos(ra1 - ra2);
         const sep = (Math.acos(Math.min(Math.max(cs, -1), 1)) * 180) / Math.PI;
+        sepArr.push(sep);
         if (sep < minSep) minSep = sep;
 
-        // Track peak index on entire range
+        // Track peak index
         if (altT !== null && altT > (targetAlt[peakIdx] ?? -Infinity)) {
           peakIdx = i;
         }
 
-        // Hover text
+        // Best observation time: maximize (altitude / 90) + (separation / 180) during night (sun < -6)
+        if (altT !== null && altT > 0 && sH.altitude < -6) {
+          const score = (altT / 90) + (sep / 180);
+          if (score > bestObsScore) { bestObsScore = score; bestObsIdx = i; }
+        }
+
+        // Hover texts
         const localDT = DateTime.fromJSDate(jsDate).setZone(tz);
         hoverText.push(
           altT !== null
-            ? `Time: ${localDT.toFormat(
-              "yyyy-LL-dd HH:mm"
-            )}<br>Alt: ${altT.toFixed(2)}°<br>Sep: ${sep.toFixed(2)}°`
+            ? `Time: ${localDT.toFormat("yyyy-LL-dd HH:mm")}<br>Alt: ${altT.toFixed(2)}°<br>Sep: ${sep.toFixed(2)}°`
+            : ""
+        );
+        // Moon hover with 2 decimal places
+        moonHoverText.push(
+          mH.altitude >= 0
+            ? `Time: ${localDT.toFormat("yyyy-LL-dd HH:mm")}<br>Moon Alt: ${mH.altitude.toFixed(2)}°`
             : ""
         );
       });
+
+      // Compute best observation time
+      if (bestObsIdx >= 0) {
+        const bestDT = DateTime.fromJSDate(allTimes[bestObsIdx]).setZone(tz);
+        setBestObsTime({
+          time: bestDT.toFormat("yyyy-LL-dd HH:mm"),
+          alt: (targetAlt[bestObsIdx] as number).toFixed(2),
+          sep: sepArr[bestObsIdx].toFixed(2),
+        });
+      } else {
+        setBestObsTime(null);
+      }
 
       // Interpolate Astronomical Dusk / Dawn:
       const threshold = -18;
@@ -681,9 +936,12 @@ export default function SkyObservationApp() {
           .toFormat("yyyy-LL-dd HH:mm")
         : "N/A";
 
-      // Compute visibility hours over entire span
+      // Compute visibility hours: only when target is above custom horizon AND during astronomical night (sun < -18°)
       const hz = Number(customHorizon);
-      const visCount = targetAlt.filter((a) => a !== null && a >= hz).length;
+      let visCount = 0;
+      for (let i = 0; i < targetAlt.length; i++) {
+        if (targetAlt[i] !== null && targetAlt[i]! >= hz && sunAlt[i] <= -18) visCount++;
+      }
       const visibilityHours = (visCount * stepMin) / 60;
 
       // Peak marker
@@ -726,6 +984,8 @@ export default function SkyObservationApp() {
             y: moonAlt,
             mode: "lines",
             name: "🌙 Moon Altitude",
+            hoverinfo: "text",
+            hovertext: moonHoverText,
             line: { dash: "dash", color: "#f5a623", width: 2 },
           },
           {
@@ -747,7 +1007,7 @@ export default function SkyObservationApp() {
             x: [peakTime],
             y: [peakAlt],
             mode: "markers",
-            name: "★ Peak Altitude",
+            name: "Peak Altitude",
             marker: {
               symbol: "star",
               size: 16,
@@ -767,7 +1027,7 @@ export default function SkyObservationApp() {
                 x: [nowDate],
                 y: [nowAlt >= 0 ? nowAlt : 0],
                 mode: "markers+text" as const,
-                name: "📍 Now",
+                name: "Now",
                 marker: {
                   symbol: "diamond",
                   size: 14,
@@ -829,16 +1089,14 @@ export default function SkyObservationApp() {
             type: "date",
             tickformat: diffDays > 1 ? "%b %d %H:%M" : "%H:%M",
             dtick: diffDays > 7 ? 86400000 : undefined, // daily ticks for long ranges
-            gridcolor: "rgba(128,128,128,0.15)",
-            griddash: "dot",
-            tickfont: { family: "Inter, system-ui, sans-serif", size: 12, color: "#a0cfdf" },
+            showgrid: false,
+                        tickfont: { family: "Inter, system-ui, sans-serif", size: 12, color: "#a0cfdf" },
             showline: false,
           },
           yaxis: {
             title: { text: "Altitude (°)", font: { family: "Inter, system-ui, sans-serif", size: 14, color: "#00d2ff" } },
-            gridcolor: "rgba(128,128,128,0.15)",
-            griddash: "dot",
-            zeroline: true,
+            showgrid: false,
+                        zeroline: true,
             zerolinecolor: "rgba(255,255,255,0.2)",
             zerolinewidth: 2,
             tickfont: { family: "Inter, system-ui, sans-serif", size: 12, color: "#a0cfdf" },
@@ -1150,203 +1408,253 @@ export default function SkyObservationApp() {
     };
   }, [theme]);
 
+  // Shared styles
+  const panelBg = theme === "dark" ? "rgba(11, 13, 23, 0.85)" : "rgba(255, 255, 255, 0.85)";
+  const cardBg = theme === "dark" ? "rgba(19, 22, 41, 0.9)" : "rgba(245, 247, 255, 0.9)";
+  const borderCol = theme === "dark" ? "rgba(79, 193, 233, 0.15)" : "rgba(100, 120, 160, 0.15)";
+  const accentColor = theme === "dark" ? "#4FC1E9" : "#2980B9";
+  const textMuted = theme === "dark" ? "#8899aa" : "#6b7280";
+  const inputBg = theme === "dark" ? "rgba(19, 22, 41, 0.95)" : "#f8f9fc";
+  const inputBorder = theme === "dark" ? "rgba(79, 193, 233, 0.25)" : "rgba(100, 120, 160, 0.25)";
+
   return (
     <div
       style={{
         height: "100vh",
         width: "100vw",
-        overflow: "hidden",
+        overflow: isMobile ? "auto" : "hidden",
         display: "flex",
         flexDirection: "column",
-        padding: "8px",
+        padding: isMobile ? "6px" : "8px",
         boxSizing: "border-box",
-        fontFamily: "Inter, system-ui, sans-serif",
+        fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
         transition: "all 0.3s",
-        color: theme === "dark" ? "#fff" : "#000",
+        color: theme === "dark" ? "#e0e8f0" : "#1a1a2e",
       }}
     >
-      {/* Background canvas for animated stars/clouds */}
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          width: "100vw",
-          height: "100vh",
-          zIndex: -1,
-          pointerEvents: "none",
-          userSelect: "none",
-        }}
-      />
+      {/* Background canvas */}
+      <canvas ref={canvasRef} style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: -1, pointerEvents: "none", userSelect: "none" }} />
 
-      {/* 🔘 Theme Toggle Top-Right */}
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: "4px", paddingRight: "8px", flexShrink: 0 }}>
-        <button
-          onClick={toggleTheme}
-          className={`relative inline-flex items-center justify-center w-14 h-8 rounded-full transition-colors duration-300 focus:outline-none ${theme === "dark" ? "bg-cyan-600" : "bg-yellow-400"
-            }`}
-          title="Toggle Theme"
-        >
-          <span
-            className={`absolute left-1 top-1 w-6 h-6 rounded-full text-sm flex items-center justify-center transition-transform duration-300 ${theme === "dark"
-              ? "translate-x-6 bg-white text-yellow-500"
-              : "translate-x-0 bg-white text-indigo-700"
-              }`}
-          >
-            {theme === "dark" ? "🌙" : "☀️"}
-          </span>
-        </button>
+      {/* Theme Toggle — fixed overlay, takes no layout space */}
+      <div style={{ position: "fixed", top: "10px", right: "12px", zIndex: 100 }}>
+        <ThemeSwitchWrapper>
+          <label className="theme-switch">
+            <input
+              type="checkbox"
+              className="theme-switch__checkbox"
+              checked={theme === "dark"}
+              onChange={toggleTheme}
+            />
+            <div className="theme-switch__container">
+              <div className="theme-switch__clouds" />
+              <div className="theme-switch__stars-container">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 55" fill="none">
+                  <path fillRule="evenodd" clipRule="evenodd" d="M135.831 3.00688C135.055 3.85027 134.111 4.29946 133 4.35447C134.111 4.40947 135.055 4.85867 135.831 5.71123C136.607 6.55462 136.996 7.56303 136.996 8.72727C136.996 7.95722 137.172 7.25134 137.525 6.59129C137.886 5.93124 138.372 5.39954 138.98 5.00535C139.598 4.60199 140.268 4.39114 141 4.35447C139.88 4.2903 138.936 3.85027 138.16 3.00688C137.384 2.16348 136.996 1.16425 136.996 0C136.996 1.16425 136.607 2.16348 135.831 3.00688ZM31 23.3545C32.1114 23.2995 33.0551 22.8503 33.8313 22.0069C34.6075 21.1635 34.9956 20.1642 34.9956 19C34.9956 20.1642 35.3837 21.1635 36.1599 22.0069C36.9361 22.8503 37.8798 23.2903 39 23.3545C38.2679 23.3911 37.5976 23.602 36.9802 24.0053C36.3716 24.3995 35.8864 24.9312 35.5248 25.5913C35.172 26.2513 34.9956 26.9572 34.9956 27.7273C34.9956 26.563 34.6075 25.5546 33.8313 24.7112C33.0551 23.8587 32.1114 23.4095 31 23.3545ZM0 36.3545C1.11136 36.2995 2.05513 35.8503 2.83131 35.0069C3.6075 34.1635 3.99559 33.1642 3.99559 32C3.99559 33.1642 4.38368 34.1635 5.15987 35.0069C5.93605 35.8503 6.87982 36.2903 8 36.3545C7.26792 36.3911 6.59757 36.602 5.98015 37.0053C5.37155 37.3995 4.88644 37.9312 4.52481 38.5913C4.172 39.2513 3.99559 39.9572 3.99559 40.7273C3.99559 39.563 3.6075 38.5546 2.83131 37.7112C2.05513 36.8587 1.11136 36.4095 0 36.3545ZM56.8313 24.0069C56.0551 24.8503 55.1114 25.2995 54 25.3545C55.1114 25.4095 56.0551 25.8587 56.8313 26.7112C57.6075 27.5546 57.9956 28.563 57.9956 29.7273C57.9956 28.9572 58.172 28.2513 58.5248 27.5913C58.8864 26.9312 59.3716 26.3995 59.9802 26.0053C60.5976 25.602 61.2679 25.3911 62 25.3545C60.8798 25.2903 59.9361 24.8503 59.1599 24.0069C58.3837 23.1635 57.9956 22.1642 57.9956 21C57.9956 22.1642 57.6075 23.1635 56.8313 24.0069ZM81 25.3545C82.1114 25.2995 83.0551 24.8503 83.8313 24.0069C84.6075 23.1635 84.9956 22.1642 84.9956 21C84.9956 22.1642 85.3837 23.1635 86.1599 24.0069C86.9361 24.8503 87.8798 25.2903 89 25.3545C88.2679 25.3911 87.5976 25.602 86.9802 26.0053C86.3716 26.3995 85.8864 26.9312 85.5248 27.5913C85.172 28.2513 84.9956 28.9572 84.9956 29.7273C84.9956 28.563 84.6075 27.5546 83.8313 26.7112C83.0551 25.8587 82.1114 25.4095 81 25.3545ZM136 36.3545C137.111 36.2995 138.055 35.8503 138.831 35.0069C139.607 34.1635 139.996 33.1642 139.996 32C139.996 33.1642 140.384 34.1635 141.16 35.0069C141.936 35.8503 142.88 36.2903 144 36.3545C143.268 36.3911 142.598 36.602 141.98 37.0053C141.372 37.3995 140.886 37.9312 140.525 38.5913C140.172 39.2513 139.996 39.9572 139.996 40.7273C139.996 39.563 139.607 38.5546 138.831 37.7112C138.055 36.8587 137.111 36.4095 136 36.3545ZM101.831 49.0069C101.055 49.8503 100.111 50.2995 99 50.3545C100.111 50.4095 101.055 50.8587 101.831 51.7112C102.607 52.5546 102.996 53.563 102.996 54.7273C102.996 53.9572 103.172 53.2513 103.525 52.5913C103.886 51.9312 104.372 51.3995 104.98 51.0053C105.598 50.602 106.268 50.3911 107 50.3545C105.88 50.2903 104.936 49.8503 104.16 49.0069C103.384 48.1635 102.996 47.1642 102.996 46C102.996 47.1642 102.607 48.1635 101.831 49.0069Z" fill="currentColor" />
+                </svg>
+              </div>
+              <div className="theme-switch__circle-container">
+                <div className="theme-switch__sun-moon-container">
+                  <div className="theme-switch__moon">
+                    <div className="theme-switch__spot" />
+                    <div className="theme-switch__spot" />
+                    <div className="theme-switch__spot" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </label>
+        </ThemeSwitchWrapper>
       </div>
 
-      {/* Main Content: Left Panel + Right Panel */}
-      <div style={{ flex: 1, minHeight: 0, display: "flex", gap: "12px", overflow: "hidden" }}>
-        {/* LEFT PANEL: Options - scrollable only */}
+      {/* Main Content */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: isMobile ? "column" : "row", gap: "10px", overflow: isMobile ? "visible" : "hidden" }}>
+        {/* LEFT PANEL */}
         <div style={{
-          width: "280px",
-          minWidth: "280px",
-          overflowY: "auto",
-          overflowX: "hidden",
-          paddingRight: "8px",
+          width: isMobile ? "100%" : "300px",
+          minWidth: isMobile ? "100%" : "300px",
+          overflowY: "auto", overflowX: "hidden",
+          paddingRight: isMobile ? "0" : "6px",
           flexShrink: 0,
+          maxHeight: isMobile ? "none" : "100%",
         }}>
 
-          <h1 className="text-xl font-bold mb-4 bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-            🔭 Astro Target Altimeter
-          </h1>
+          {/* SIMBAD Search */}
+          <div style={{ marginBottom: "10px", background: cardBg, borderRadius: "10px", padding: "10px", border: `1px solid ${borderCol}` }}>
+            <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "4px", color: accentColor, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+               SIMBAD Target Search
+            </label>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <input
+                type="text"
+                value={simbadQuery}
+                placeholder="e.g. M31, NGC 7000..."
+                onChange={(e) => setSimbadQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSimbadSearch()}
+                style={{
+                  flex: 1, padding: "8px 10px", fontSize: "13px", borderRadius: "8px",
+                  border: `1px solid ${inputBorder}`, background: inputBg,
+                  color: theme === "dark" ? "#e0e8f0" : "#1a1a2e", outline: "none",
+                  transition: "border-color 0.2s",
+                }}
+              />
+              <button
+                onClick={handleSimbadSearch}
+                disabled={simbadLoading}
+                style={{
+                  padding: "8px 14px", borderRadius: "8px", border: "none", cursor: "pointer",
+                  background: `linear-gradient(135deg, ${accentColor}, #7C5CFC)`, color: "#fff",
+                  fontSize: "12px", fontWeight: 700, transition: "opacity 0.2s",
+                  opacity: simbadLoading ? 0.6 : 1,
+                }}
+              >
+                {simbadLoading ? "..." : "Search"}
+              </button>
+            </div>
+            {simbadResults.length > 0 && (
+              <div style={{ marginTop: "6px", maxHeight: "120px", overflowY: "auto", borderRadius: "6px", border: `1px solid ${borderCol}`, background: inputBg }}>
+                {simbadResults.map((r, i) => (
+                  <div
+                    key={i}
+                    onClick={() => handleSimbadSelect(r)}
+                    style={{
+                      padding: "6px 10px", cursor: "pointer", fontSize: "12px",
+                      borderBottom: i < simbadResults.length - 1 ? `1px solid ${borderCol}` : "none",
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = theme === "dark" ? "rgba(79,193,233,0.1)" : "rgba(41,128,185,0.08)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  >
+                    <strong>{r.name}</strong>
+                    <span style={{ color: textMuted, marginLeft: "8px" }}>
+                      RA: {r.ra?.toFixed(3)}° DEC: {r.dec?.toFixed(3)}°
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-          {/* Location + Random Target */}
-          <div className="mb-3" style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
-            <StyledGenerateButton onClick={handleUseCurrentLocation} style={{ fontSize: "0.75rem", padding: "6px 12px" }}>
-              📍 My Location
-            </StyledGenerateButton>
-            <StyledGenerateButton onClick={handleRandomTarget} style={{ fontSize: "0.75rem", padding: "6px 12px" }}>
-              🎲 Random Target
-            </StyledGenerateButton>
+          {/* Quick Actions */}
+          <div style={{ display: "flex", gap: "6px", marginBottom: "10px" }}>
+            <button onClick={handleUseCurrentLocation} style={{
+              flex: 1, padding: "8px", borderRadius: "8px", border: `1px solid ${borderCol}`,
+              background: cardBg, color: theme === "dark" ? "#e0e8f0" : "#1a1a2e",
+              fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s",
+            }}>My Location</button>
+            <button onClick={handleRandomTarget} style={{
+              flex: 1, padding: "8px", borderRadius: "8px", border: `1px solid ${borderCol}`,
+              background: cardBg, color: theme === "dark" ? "#e0e8f0" : "#1a1a2e",
+              fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s",
+            }}>Random Target</button>
           </div>
           {targetName && (
-            <p className="text-center text-xs mb-2" style={{ opacity: 0.7 }}>
-              Selected: <strong>{targetName}</strong>
+            <p style={{ textAlign: "center", fontSize: "12px", marginBottom: "8px", color: accentColor, fontWeight: 600 }}>
+              🎯 {targetName}
             </p>
           )}
 
-          {/* Inputs with inline errors */}
+          {/* Coordinate Format Toggle */}
+          <div style={{ marginBottom: "8px", display: "flex", gap: "4px", background: cardBg, borderRadius: "8px", padding: "3px", border: `1px solid ${borderCol}` }}>
+            {(["hms", "deg"] as const).map(fmt => (
+              <button
+                key={fmt}
+                onClick={() => setCoordFormat(fmt)}
+                style={{
+                  flex: 1, padding: "5px", borderRadius: "6px", border: "none", cursor: "pointer",
+                  fontSize: "11px", fontWeight: 700, transition: "all 0.2s",
+                  background: coordFormat === fmt ? accentColor : "transparent",
+                  color: coordFormat === fmt ? "#fff" : textMuted,
+                }}
+              >
+                {fmt === "hms" ? "HMS / DMS" : "Degrees"}
+              </button>
+            ))}
+          </div>
+
+          {/* Coordinate Inputs */}
           {[
-            ["RA (HHMMSS)", ra, setRa, "e.g. 053542", "ra"],
-            ["DEC (±DDMMSS)", dec, setDec, "e.g. +223358", "dec"],
-            ["Latitude", latitude, setLatitude, "e.g. 50.45", "lat"],
-            ["Longitude", longitude, setLongitude, "e.g. -104.62", "lon"],
+            [coordFormat === "hms" ? "RA (HHMMSS)" : "RA (degrees)", ra, setRa, coordFormat === "hms" ? "e.g. 053542" : "e.g. 83.822", "ra"],
+            [coordFormat === "hms" ? "DEC (±DDMMSS)" : "DEC (degrees)", dec, setDec, coordFormat === "hms" ? "e.g. +223358" : "e.g. -5.39", "dec"],
+            ["Latitude (°)", latitude, setLatitude, "e.g. 50.45", "lat"],
+            ["Longitude (°)", longitude, setLongitude, "e.g. -104.62", "lon"],
           ].map(([label, value, setter, placeholder, errKey]) => {
             const err = (fieldErrors as any)[errKey] || "";
             return (
-              <div className="mb-2" key={label}>
-                <label className="block text-xs mb-1" style={{ opacity: 0.8 }}>{label}:</label>
+              <div key={label as string} style={{ marginBottom: "6px" }}>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "3px", color: textMuted }}>
+                  {label as string}
+                </label>
                 <input
                   type="text"
-                  value={value}
-                  placeholder={placeholder}
-                  onChange={(e) => { setter(e.target.value); if (err) setFieldErrors(prev => ({ ...prev, [errKey]: "" })); }}
-                  style={err ? { borderColor: "#ef4444" } : {}}
-                  className={`w-full px-3 py-1 text-sm rounded border focus:outline-none focus:ring-2 focus:ring-cyan-400
-          ${theme === "dark"
-                      ? "bg-gray-800 border-cyan-600 text-white placeholder-gray-500"
-                      : "bg-gray-100 border-gray-400 text-black placeholder-gray-400"
-                    }
-        `}
+                  value={value as string}
+                  placeholder={placeholder as string}
+                  onChange={(e) => { (setter as any)(e.target.value); if (err) setFieldErrors(prev => ({ ...prev, [errKey as string]: "" })); }}
+                  style={{
+                    width: "100%", padding: "8px 10px", fontSize: "13px", borderRadius: "8px",
+                    border: `1px solid ${err ? "#ef4444" : inputBorder}`, background: inputBg,
+                    color: theme === "dark" ? "#e0e8f0" : "#1a1a2e", outline: "none",
+                    boxSizing: "border-box", transition: "border-color 0.2s",
+                  }}
                 />
-                {err && <p className="text-red-400 text-xs mt-0.5">⚠ {err}</p>}
+                {err && <p style={{ color: "#ef4444", fontSize: "11px", marginTop: "2px" }}>⚠ {err}</p>}
               </div>
             );
           })}
 
-          {/* Date Preset */}
-          <div className="mb-2">
-            <label className="block text-xs mb-1" style={{ opacity: 0.8 }}>Select Time Range:</label>
+          {/* Time Range Preset */}
+          <div style={{ marginBottom: "8px" }}>
+            <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "3px", color: textMuted }}>Time Range</label>
             <select
-              className={`w-full px-3 py-1 text-sm rounded border focus:outline-none focus:ring-2 focus:ring-cyan-400
-      ${theme === "dark"
-                  ? "bg-gray-800 border-indigo-500 text-white"
-                  : "bg-gray-100 border-gray-400 text-black"
-                }
-    `}
               value={preset}
               onChange={(e) => setPreset(e.target.value as any)}
+              style={{
+                width: "100%", padding: "8px 10px", fontSize: "13px", borderRadius: "8px",
+                border: `1px solid ${inputBorder}`, background: inputBg,
+                color: theme === "dark" ? "#e0e8f0" : "#1a1a2e", outline: "none",
+                cursor: "pointer",
+              }}
             >
-              <option value="lastNight">Last Night</option>
-              <option value="nextNight">Next Night</option>
-              <option value="next7">Next 7 Nights</option>
-              <option value="next15">Next 15 Nights</option>
-              <option value="custom">Custom Night</option>
+              <option value="tonight">🌃 Tonight</option>
+              <option value="lastNight">◀ Last Night</option>
+              <option value="nextNight">▶ Next Night</option>
+              <option value="next7">📅 Next 7 Nights</option>
+              <option value="next15">📅 Next 15 Nights</option>
+              <option value="next6months">📆 Next 6 Months</option>
+              <option value="nextYear">📆 Next Year</option>
+              <option value="custom">✏️ Custom Range</option>
             </select>
           </div>
 
           {/* Custom Date Picker */}
           {preset === "custom" && (
-            <div className="mb-3 bg-gray-800 p-2 rounded-md">
+            <div style={{ marginBottom: "8px", background: cardBg, borderRadius: "8px", padding: "8px", border: `1px solid ${borderCol}` }}>
               <button
-                className="mb-2 text-cyan-400 hover:text-cyan-300 underline text-sm"
                 onClick={() => setShowPicker(!showPicker)}
+                style={{
+                  background: "none", border: "none", color: accentColor, cursor: "pointer",
+                  fontSize: "12px", fontWeight: 600, textDecoration: "underline",
+                }}
               >
-                {DateTime.fromJSDate(range[0].startDate).toISODate()} –{" "}
-                {DateTime.fromJSDate(range[0].endDate).toISODate()}
+                {DateTime.fromJSDate(range[0].startDate).toISODate()} – {DateTime.fromJSDate(range[0].endDate).toISODate()}
               </button>
               {showPicker && (
                 <>
-                  {/* Backdrop to close picker when clicking outside */}
-                  <div
-                    style={{
-                      position: "fixed",
-                      top: 0,
-                      left: 0,
-                      width: "100vw",
-                      height: "100vh",
-                      zIndex: 40,
-                    }}
-                    onClick={() => setShowPicker(false)}
-                  />
-                  {/* Calendar overlay */}
-                  <div
-                    style={{
-                      position: "fixed",
-                      top: "50%",
-                      left: "50%",
-                      transform: "translate(-50%, -50%)",
-                      zIndex: 50,
-                      background: "#1f2937",
-                      borderRadius: "12px",
-                      padding: "16px",
-                      boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 30px rgba(0,210,255,0.15)",
-                      border: "1px solid rgba(0,210,255,0.2)",
-                      maxHeight: "90vh",
-                      overflow: "auto",
-                    }}
-                  >
+                  <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", zIndex: 40 }} onClick={() => setShowPicker(false)} />
+                  <div style={{
+                    position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 50,
+                    background: theme === "dark" ? "#131629" : "#fff", borderRadius: "12px", padding: "16px",
+                    boxShadow: "0 25px 60px rgba(0,0,0,0.5)", border: `1px solid ${borderCol}`,
+                    maxHeight: "90vh", overflow: "auto",
+                  }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                      <span style={{ color: "#06b6d4", fontWeight: 600, fontSize: "14px" }}>Select Date Range</span>
-                      <button
-                        onClick={() => setShowPicker(false)}
-                        style={{
-                          background: "none",
-                          border: "1px solid rgba(255,255,255,0.2)",
-                          color: "#fff",
-                          borderRadius: "6px",
-                          padding: "4px 10px",
-                          cursor: "pointer",
-                          fontSize: "12px",
-                        }}
-                      >
-                        ✕ Close
-                      </button>
+                      <span style={{ color: accentColor, fontWeight: 600, fontSize: "14px" }}>Select Date Range</span>
+                      <button onClick={() => setShowPicker(false)} style={{
+                        background: "none", border: `1px solid ${borderCol}`, color: theme === "dark" ? "#e0e8f0" : "#333",
+                        borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontSize: "12px",
+                      }}>✕ Close</button>
                     </div>
-                    <DateRangePicker
-                      ranges={range}
-                      onChange={handleRangeChange}
-                      moveRangeOnFirstSelection={false}
-                      editableDateInputs={true}
-                      months={2}
-                      direction="vertical"
-                      rangeColors={["#06b6d4"]}
-                    />
+                    <DateRangePicker ranges={range} onChange={handleRangeChange} moveRangeOnFirstSelection={false}
+                      editableDateInputs={true} months={2} direction="vertical" rangeColors={[accentColor]} />
                   </div>
                 </>
               )}
@@ -1354,44 +1662,66 @@ export default function SkyObservationApp() {
           )}
 
           {/* Custom Horizon */}
-          <div className="mb-3">
-            <label className="block text-xs mb-1" style={{ opacity: 0.8 }}>Custom Horizon (°):</label>
+          <div style={{ marginBottom: "10px" }}>
+            <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "3px", color: textMuted }}>Custom Horizon (°)</label>
             <input
-              type="text"
+              type="number"
+              min={0}
+              max={90}
               value={customHorizon}
-              onChange={(e) => setCustomHorizon(e.target.value)}
-              className={`w-full px-3 py-1 text-sm rounded border focus:outline-none focus:ring-2 focus:ring-cyan-400
-    ${theme === "dark"
-                  ? "bg-gray-800 border-cyan-600 text-white"
-                  : "bg-gray-100 border-gray-400 text-black"
+              onChange={(e) => {
+                const val = e.target.value;
+                setCustomHorizon(val);
+                if (val === "") {
+                  setFieldErrors(prev => ({ ...prev, horizon: "Horizon is required." }));
+                } else {
+                  const num = Number(val);
+                  if (isNaN(num)) setFieldErrors(prev => ({ ...prev, horizon: "Must be a number." }));
+                  else if (num < 0 || num > 90) setFieldErrors(prev => ({ ...prev, horizon: "Must be between 0° and 90°." }));
+                  else setFieldErrors(prev => ({ ...prev, horizon: "" }));
                 }
-  `}
+              }}
+              style={{
+                width: "100%", padding: "8px 10px", fontSize: "13px", borderRadius: "8px",
+                border: `1px solid ${fieldErrors.horizon ? "#ef4444" : inputBorder}`, background: inputBg,
+                color: theme === "dark" ? "#e0e8f0" : "#1a1a2e", outline: "none",
+                boxSizing: "border-box", transition: "border-color 0.2s",
+              }}
             />
+            {fieldErrors.horizon && <p style={{ color: "#ef4444", fontSize: "11px", marginTop: "2px" }}>⚠ {fieldErrors.horizon}</p>}
           </div>
 
-          {/* Generate Chart + Clear All */}
-          <div className="mb-3" style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-            <StyledGenerateButton onClick={renderChart}>
-              Generate Chart 🚀
-            </StyledGenerateButton>
+          {/* Generate + Clear Buttons */}
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+            <button
+              onClick={renderChart}
+              style={{
+                flex: 1, padding: "10px", borderRadius: "10px", border: "none", cursor: "pointer",
+                background: `linear-gradient(135deg, ${accentColor}, #7C5CFC)`, color: "#fff",
+                fontSize: "13px", fontWeight: 700, transition: "all 0.2s",
+                boxShadow: "0 4px 12px rgba(79, 193, 233, 0.3)",
+              }}
+            >
+              Generate 
+            </button>
             <button
               onClick={() => {
                 setRa(""); setDec(""); setLatitude(""); setLongitude("");
-                setCustomHorizon("30"); setPreset("nextNight");
+                setCustomHorizon("30"); setPreset("tonight");
                 setPlotData({ data: [], layout: {} }); setChartInfo(null); setTargetName("");
-                setFieldErrors({ ra: "", dec: "", lat: "", lon: "", general: "" });
-                try {
-                  Object.keys(localStorage).filter(k => k.startsWith("ata_")).forEach(k => localStorage.removeItem(k));
-                } catch { }
+                setBestObsTime(null); setSimbadQuery(""); setSimbadResults([]);
+                setFieldErrors({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
+                try { Object.keys(localStorage).filter(k => k.startsWith("ata_")).forEach(k => localStorage.removeItem(k)); } catch { }
               }}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200
-                ${theme === "dark"
-                  ? "bg-gray-700 text-gray-300 hover:bg-red-600 hover:text-white"
-                  : "bg-gray-200 text-gray-600 hover:bg-red-500 hover:text-white"
-                }`}
+              style={{
+                padding: "10px 16px", borderRadius: "10px", cursor: "pointer",
+                background: theme === "dark" ? "rgba(239, 68, 68, 0.15)" : "rgba(239, 68, 68, 0.1)",
+                border: `1px solid ${theme === "dark" ? "rgba(239, 68, 68, 0.3)" : "rgba(239, 68, 68, 0.25)"}`,
+                color: "#ef4444", fontSize: "13px", fontWeight: 600, transition: "all 0.2s",
+              }}
               title="Clear all fields and reset"
             >
-              Clear 🗑
+              🗑
             </button>
           </div>
 
@@ -1399,12 +1729,11 @@ export default function SkyObservationApp() {
           {(() => {
             const moonPhaseRef = React.useRef<HTMLCanvasElement>(null);
             const now = Astronomy.MakeTime(new Date());
-            const phaseAngle = Astronomy.MoonPhase(now); // 0-360
+            const phaseAngle = Astronomy.MoonPhase(now);
             const illum = Astronomy.Illumination(Astronomy.Body.Moon, now);
             const phaseFraction = illum.phase_fraction;
             const phasePct = (phaseFraction * 100).toFixed(1);
 
-            // Phase name
             let phaseName = "";
             if (phaseAngle < 5 || phaseAngle >= 355) phaseName = "New Moon";
             else if (phaseAngle < 85) phaseName = "Waxing Crescent";
@@ -1420,158 +1749,81 @@ export default function SkyObservationApp() {
               if (!canvas) return;
               const ctx = canvas.getContext("2d");
               if (!ctx) return;
-
-              const size = 100;
-              canvas.width = size;
-              canvas.height = size;
-              const cx = size / 2;
-              const cy = size / 2;
-              const r = 40;
-
+              const size = 100; canvas.width = size; canvas.height = size;
+              const cx = size / 2, cy = size / 2, r = 40;
               ctx.clearRect(0, 0, size, size);
-
-              // Outer glow
-              ctx.beginPath();
-              ctx.arc(cx, cy, r + 4, 0, 2 * Math.PI);
-              ctx.fillStyle = theme === "dark"
-                ? "rgba(200,200,180,0.06)"
-                : "rgba(0,0,0,0.04)";
-              ctx.fill();
-
-              // Dark moon base
-              ctx.beginPath();
-              ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+              ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, 2 * Math.PI);
+              ctx.fillStyle = theme === "dark" ? "rgba(200,200,180,0.06)" : "rgba(0,0,0,0.04)"; ctx.fill();
+              ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI);
               const darkGrad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
               darkGrad.addColorStop(0, theme === "dark" ? "#333" : "#bbb");
               darkGrad.addColorStop(1, theme === "dark" ? "#1a1a1a" : "#999");
-              ctx.fillStyle = darkGrad;
-              ctx.fill();
-
-              // Lit moon gradient
+              ctx.fillStyle = darkGrad; ctx.fill();
               const litGrad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.2, 0, cx, cy, r);
-              litGrad.addColorStop(0, "#fff");
-              litGrad.addColorStop(0.3, "#f0ede0");
-              litGrad.addColorStop(0.7, "#d8d4c4");
-              litGrad.addColorStop(1, "#c0bba8");
-
-              const angle = phaseAngle;
-              const cosA = Math.cos((angle * Math.PI) / 180);
-              const absCos = Math.abs(cosA);
-
-              // Scanline rendering for accurate phase
+              litGrad.addColorStop(0, "#fff"); litGrad.addColorStop(0.3, "#f0ede0");
+              litGrad.addColorStop(0.7, "#d8d4c4"); litGrad.addColorStop(1, "#c0bba8");
+              const angle = phaseAngle; const cosA = Math.cos((angle * Math.PI) / 180); const absCos = Math.abs(cosA);
               for (let dy = -r; dy <= r; dy += 0.5) {
-                const xEdge = Math.sqrt(r * r - dy * dy);
-                const xTerm = absCos * xEdge;
-
+                const xEdge = Math.sqrt(r * r - dy * dy); const xTerm = absCos * xEdge;
                 let leftX: number, rightX: number;
-
-                if (angle <= 180) {
-                  // Waxing: right side lit
-                  if (cosA >= 0) {
-                    // Crescent: lit from terminator to right edge
-                    leftX = xTerm;
-                    rightX = xEdge;
-                  } else {
-                    // Gibbous: lit from -terminator to right edge
-                    leftX = -xTerm;
-                    rightX = xEdge;
-                  }
-                } else {
-                  // Waning: left side lit
-                  if (cosA <= 0) {
-                    // Gibbous: lit from left edge to terminator
-                    leftX = -xEdge;
-                    rightX = xTerm;
-                  } else {
-                    // Crescent: lit from left edge to -terminator
-                    leftX = -xEdge;
-                    rightX = -xTerm;
-                  }
-                }
-
+                if (angle <= 180) { if (cosA >= 0) { leftX = xTerm; rightX = xEdge; } else { leftX = -xTerm; rightX = xEdge; } }
+                else { if (cosA <= 0) { leftX = -xEdge; rightX = xTerm; } else { leftX = -xEdge; rightX = -xTerm; } }
                 const w = rightX - leftX;
-                if (w > 0) {
-                  ctx.fillStyle = litGrad;
-                  ctx.fillRect(cx + leftX, cy + dy, w, 0.8);
-                }
+                if (w > 0) { ctx.fillStyle = litGrad; ctx.fillRect(cx + leftX, cy + dy, w, 0.8); }
               }
-
-              // Crater details for realism
-              const craters = [
-                { x: 0.15, y: -0.2, s: 0.12, a: 0.15 },
-                { x: -0.25, y: 0.1, s: 0.18, a: 0.12 },
-                { x: 0.3, y: 0.25, s: 0.1, a: 0.1 },
-                { x: -0.1, y: -0.35, s: 0.08, a: 0.13 },
-                { x: 0.05, y: 0.35, s: 0.14, a: 0.1 },
-              ];
-              craters.forEach((c) => {
-                ctx.beginPath();
-                ctx.arc(cx + c.x * r, cy + c.y * r, c.s * r, 0, 2 * Math.PI);
-                ctx.fillStyle = `rgba(100,100,90,${c.a})`;
-                ctx.fill();
+              [{ x: 0.15, y: -0.2, s: 0.12, a: 0.15 }, { x: -0.25, y: 0.1, s: 0.18, a: 0.12 },
+               { x: 0.3, y: 0.25, s: 0.1, a: 0.1 }, { x: -0.1, y: -0.35, s: 0.08, a: 0.13 },
+               { x: 0.05, y: 0.35, s: 0.14, a: 0.1 }].forEach(c => {
+                ctx.beginPath(); ctx.arc(cx + c.x * r, cy + c.y * r, c.s * r, 0, 2 * Math.PI);
+                ctx.fillStyle = `rgba(100,100,90,${c.a})`; ctx.fill();
               });
-
-              // Rim highlight
-              ctx.beginPath();
-              ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-              ctx.strokeStyle = theme === "dark"
-                ? "rgba(200,200,180,0.2)"
-                : "rgba(0,0,0,0.1)";
-              ctx.lineWidth = 1.5;
-              ctx.stroke();
+              ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+              ctx.strokeStyle = theme === "dark" ? "rgba(200,200,180,0.2)" : "rgba(0,0,0,0.1)";
+              ctx.lineWidth = 1.5; ctx.stroke();
             }, [phaseAngle, theme]);
 
             return (
-              <div className="mb-3 flex flex-col items-center">
-                <canvas
-                  ref={moonPhaseRef}
-                  width={100}
-                  height={100}
-                  style={{ imageRendering: "auto" }}
-                />
-                <p className={`text-xs font-semibold mt-1 ${theme === "dark" ? "text-cyan-300" : "text-indigo-600"}`}>
-                  {phaseName}
-                </p>
-                <p className={`text-xs ${theme === "dark" ? "text-gray-400" : "text-gray-500"}`}>
-                  {phasePct}% illuminated (now)
-                </p>
+              <div style={{ marginBottom: "10px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <canvas ref={moonPhaseRef} width={100} height={100} style={{ imageRendering: "auto" }} />
+                <p style={{ fontSize: "12px", fontWeight: 600, marginTop: "4px", color: accentColor }}>{phaseName}</p>
+                <p style={{ fontSize: "11px", color: textMuted }}>{phasePct}% illuminated</p>
               </div>
             );
           })()}
 
+          {/* Credits */}
+          <div style={{
+            position: "fixed", bottom: "10px", left: 0,
+            width: isMobile ? "100%" : "300px",
+            textAlign: "center", fontSize: "11px", lineHeight: "1.6", zIndex: 10,
+          }}>
+            <p style={{ color: textMuted, marginBottom: "1px", fontSize: "10px", letterSpacing: "1px"  }}>Developed by</p>
+            <a href="https://github.com/Mahir0759e" target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: accentColor, textDecoration: "none", display: "block" }}>Mahir Trivedi</a>
+            <p style={{ color: textMuted, fontSize: "10px", margin: "2px 0 1px" }}>Co-Developed by</p>
+            <a href="https://github.com/SahilPurabiya" target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: accentColor, textDecoration: "none", display: "block" }}>Sahil Purabiya</a>
+          </div>
+
+
           {/* Errors & Loading */}
-          {fieldErrors.general && <p className="text-red-400 text-xs">⚠ {fieldErrors.general}</p>}
-          {loading && (
-            <p className="text-gray-400 text-xs">Processing image…</p>
-          )}
+          {fieldErrors.general && <p style={{ color: "#ef4444", fontSize: "11px", marginBottom: "6px" }}>⚠ {fieldErrors.general}</p>}
+          {loading && <p style={{ color: textMuted, fontSize: "11px" }}>Processing image…</p>}
         </div>
 
         {/* RIGHT PANEL: Plot + HUD Info */}
-        <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {/* Target name banner above chart */}
+        <div style={{ flex: 1, minHeight: isMobile ? "400px" : 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: isMobile ? "0" : "44px" }}>
+          {/* Target name banner */}
           {targetName && plotData.data.length > 0 && (
-            <div style={{
-              textAlign: "center",
-              padding: "4px 0",
-              flexShrink: 0,
-            }}>
+            <div style={{ textAlign: "center", padding: "4px 0", flexShrink: 0 }}>
               <span style={{
-                fontSize: "1rem",
-                fontWeight: 700,
-                background: "linear-gradient(90deg, #22d3ee, #818cf8)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                letterSpacing: "0.5px",
+                fontSize: isMobile ? "0.9rem" : "1rem", fontWeight: 700,
+                color: theme === "dark" ? "#4FC1E9" : "#2980B9", letterSpacing: "0.5px",
               }}>
                 🎯 {targetName}
               </span>
             </div>
           )}
-          {/* Chart area - takes all remaining space */}
-          <div
-            ref={plotContainerRef}
-            style={{ flex: 1, minHeight: 0, position: "relative" }}
-          >
+          {/* Chart area */}
+          <div ref={plotContainerRef} style={{ flex: 1, minHeight: isMobile ? "350px" : 0, position: "relative" }}>
             {plotData.data.length > 0 ? (
               <Plot
                 data={plotData.data}
@@ -1579,47 +1831,22 @@ export default function SkyObservationApp() {
                   ...plotData.layout,
                   paper_bgcolor: "rgba(0,0,0,0)",
                   plot_bgcolor: "rgba(0,0,0,0)",
-                  font: {
-                    color: theme === "dark" ? "#e0e0e0" : "#2d2d2d",
-                    family: "Inter, system-ui, sans-serif",
-                  },
-                  xaxis: {
-                    ...plotData.layout.xaxis,
-                    color: theme === "dark" ? "#a0cfdf" : "#555",
-                    gridcolor: theme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
-                  },
-                  yaxis: {
-                    ...plotData.layout.yaxis,
-                    color: theme === "dark" ? "#a0cfdf" : "#555",
-                    gridcolor: theme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
-                  },
+                  font: { color: theme === "dark" ? "#e0e8f0" : "#2d2d2d", family: "'Inter', system-ui, sans-serif" },
+                  xaxis: { ...plotData.layout.xaxis, showgrid: false, color: theme === "dark" ? "#8899aa" : "#555" },
+                  yaxis: { ...plotData.layout.yaxis, showgrid: false, color: theme === "dark" ? "#8899aa" : "#555" },
                   hoverlabel: {
                     ...plotData.layout.hoverlabel,
-                    bgcolor: theme === "dark" ? "rgba(20,20,40,0.92)" : "rgba(255,255,255,0.95)",
-                    bordercolor: theme === "dark" ? "rgba(0,210,255,0.5)" : "rgba(100,100,100,0.3)",
-                    font: {
-                      family: "Inter, system-ui, sans-serif",
-                      size: 12,
-                      color: theme === "dark" ? "#e0e0e0" : "#333",
-                    },
+                    bgcolor: theme === "dark" ? "rgba(11,13,23,0.95)" : "rgba(255,255,255,0.95)",
+                    bordercolor: theme === "dark" ? "rgba(79,193,233,0.4)" : "rgba(100,100,100,0.3)",
+                    font: { family: "'Inter', system-ui, sans-serif", size: 12, color: theme === "dark" ? "#e0e8f0" : "#333" },
                   },
                   annotations: (plotData.layout.annotations || []).map((ann: any) => ({
                     ...ann,
-                    font: {
-                      ...(ann.font || {}),
-                      color: ann.font?.color || (theme === "dark" ? "#e0e0e0" : "#333"),
-                    },
-                    bgcolor: ann.bgcolor || (theme === "dark" ? "rgba(15,15,35,0.8)" : "rgba(255,255,255,0.9)"),
-                    bordercolor: ann.bordercolor || (theme === "dark" ? "rgba(0,210,255,0.3)" : "rgba(100,100,100,0.3)"),
+                    font: { ...(ann.font || {}), color: ann.font?.color || (theme === "dark" ? "#e0e8f0" : "#333") },
+                    bgcolor: ann.bgcolor || (theme === "dark" ? "rgba(11,13,23,0.85)" : "rgba(255,255,255,0.9)"),
+                    bordercolor: ann.bordercolor || (theme === "dark" ? "rgba(79,193,233,0.3)" : "rgba(100,100,100,0.3)"),
                   })),
-                  legend: {
-                    ...plotData.layout.legend,
-                    font: {
-                      family: "Inter, system-ui, sans-serif",
-                      size: 12,
-                      color: theme === "dark" ? "#c0c0c0" : "#444",
-                    },
-                  },
+                  legend: { ...plotData.layout.legend, font: { family: "'Inter', system-ui, sans-serif", size: 12, color: theme === "dark" ? "#8899aa" : "#444" } },
                   autosize: true,
                 }}
                 config={{
@@ -1627,42 +1854,45 @@ export default function SkyObservationApp() {
                   modeBarButtonsToRemove: ["lasso2d", "select2d"],
                   displaylogo: false,
                   responsive: true,
+                  toImageButtonOptions: { format: "png", filename: `ATA_RA${ra.trim()}_DEC${dec.trim()}` },
                 }}
                 useResizeHandler={true}
                 style={{ width: "100%", height: "100%" }}
               />
             ) : (
-              <div className="flex items-center justify-center h-full text-gray-400 text-sm italic">
-                No chart generated yet.
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
+                color: textMuted, fontSize: "14px", fontStyle: "italic",
+              }}>
+                <span>Enter coordinates and generate a chart ✨</span>
               </div>
             )}
           </div>
 
-          {/* HUD Info Bar - below chart */}
+          {/* HUD Info Bar - card style */}
           {chartInfo && (
-            <div
-              style={{
-                flexShrink: 0,
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "16px",
-                justifyContent: "center",
-                alignItems: "center",
-                padding: "8px 16px",
-                background: theme === "dark" ? "rgba(15,15,35,0.7)" : "rgba(255,255,255,0.8)",
-                borderRadius: "8px",
-                border: `1px solid ${theme === "dark" ? "rgba(0,210,255,0.2)" : "rgba(100,100,100,0.2)"}`,
-                marginTop: "4px",
-                fontSize: "12px",
-                fontFamily: "Inter, system-ui, sans-serif",
-                color: theme === "dark" ? "#c0e0ef" : "#333",
-              }}
-            >
-              <span>🌙 <strong>Moon (at obs.):</strong> {chartInfo.moonPct}%</span>
-              <span>⏱ <strong>Visibility:</strong> {chartInfo.visibilityHours}h</span>
-              <span>🌅 <strong>Dusk:</strong> {chartInfo.duskLocal}</span>
-              <span>🌄 <strong>Dawn:</strong> {chartInfo.dawnLocal}</span>
-              <span>🌍 <strong>TZ:</strong> {chartInfo.tzAbbrev} ({chartInfo.tzFull})</span>
+            <div style={{
+              flexShrink: 0, display: "flex", flexWrap: "wrap", gap: "8px",
+              justifyContent: "center", alignItems: "stretch",
+              padding: "8px", marginTop: "4px",
+            }}>
+              {[
+                { icon: "🌙", label: "Moon", value: `${chartInfo.moonPct}%` },
+                { icon: "⏱", label: "Visibility", value: `${chartInfo.visibilityHours}h` },
+                { icon: "🌅", label: "Dusk", value: chartInfo.duskLocal.split(" ").pop() || chartInfo.duskLocal },
+                { icon: "🌄", label: "Dawn", value: chartInfo.dawnLocal.split(" ").pop() || chartInfo.dawnLocal },
+                { icon: "🌍", label: "TZ", value: chartInfo.tzAbbrev },
+              ].map((item, i) => (
+                <div key={i} style={{
+                  background: cardBg, borderRadius: "8px", padding: "6px 12px",
+                  border: `1px solid ${borderCol}`, textAlign: "center", minWidth: "70px",
+                  backdropFilter: "blur(10px)",
+                }}>
+                  <div style={{ fontSize: "14px", marginBottom: "2px" }}>{item.icon}</div>
+                  <div style={{ fontSize: "10px", color: textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.3px" }}>{item.label}</div>
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: theme === "dark" ? "#e0e8f0" : "#1a1a2e" }}>{item.value}</div>
+                </div>
+              ))}
             </div>
           )}
         </div>
