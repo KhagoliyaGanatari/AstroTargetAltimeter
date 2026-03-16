@@ -39,21 +39,7 @@ const StyledGenerateButton = styled.button`
 
   &:hover {
     background-color: #7d6dff;
-    box-shadow: 0px 5px 0px 0px #a29bfe, 0 0 25px rgba(108, 92, 231, 0.5), 0 0 50px rgba(108, 92, 231, 0.2);
   }
-
-  &:active {
-    transform: translateY(5px);
-    box-shadow: 0px 0px 0px 0px #a29bfe;
-  }
-`;
-
-//Use my current location button css
-
-const StyledLocationButton = styled.button`
-  display: flex;
-  align-items: center;
-  justify-content: center;
   gap: 10px;
   width: 220px;
   height: 52px;
@@ -288,6 +274,35 @@ const ThemeSwitchWrapper = styled.div`
 `;
 
 export default function SkyObservationApp() {
+  // --- CORS-safe fetch: tries direct, then multiple CORS proxies ---
+  const corsFetch = async (url: string): Promise<Response> => {
+    // Direct fetch works on localhost but blocked by CORS on GitHub Pages
+    try {
+      const res = await fetch(url);
+      if (res.ok) return res;
+    } catch {}
+    // Try CORS proxies in order
+    const proxies: Array<{ build: (u: string) => string; unwrap?: (res: Response) => Promise<Response> }> = [
+      { build: (u) => `https://corsproxy.io/?${encodeURIComponent(u)}` },
+      {
+        build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+        // allorigins /get returns JSON { contents: "..." }, unwrap it into a plain Response
+        unwrap: async (res) => {
+          const json = await res.json();
+          return new Response(json.contents, { status: 200, headers: { "Content-Type": "application/json" } });
+        },
+      },
+      { build: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
+    ];
+    for (const { build, unwrap } of proxies) {
+      try {
+        const res = await fetch(build(url));
+        if (res.ok) return unwrap ? await unwrap(res) : res;
+      } catch {}
+    }
+    throw new Error("All fetch attempts failed. CORS proxies may be unavailable.");
+  };
+
   // Tonight: today 6 PM → tomorrow 6 AM
   const getTonightRange = () => {
     const today = new Date();
@@ -313,9 +328,20 @@ export default function SkyObservationApp() {
     return { startDate, endDate, key: "selection" };
   };
 
+  const formatJplDate = (d: Date) => {
+    const y = d.getUTCFullYear();
+    const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dy = String(d.getUTCDate()).padStart(2, "0");
+    const hh = String(d.getUTCHours()).padStart(2, "0");
+    const mm = String(d.getUTCMinutes()).padStart(2, "0");
+    return `${y}-${mo}-${dy} ${hh}:${mm}`;
+  };
+
   // --- State hooks ---
   const canvasRef = React.useRef(null);
 
+  
+  // Select a JPL target (comet or asteroid) and fetch RA/Dec for display
   const loadSaved = (key: string, fallback: string) => {
     try { return localStorage.getItem(`ata_${key}`) || fallback; } catch { return fallback; }
   };
@@ -333,6 +359,13 @@ export default function SkyObservationApp() {
   const [simbadResults, setSimbadResults] = useState<any[]>([]);
   const [simbadLoading, setSimbadLoading] = useState(false);
 
+  // JPL Horizons search (comets & asteroids)
+  const [jplResults, setJplResults] = useState<any[]>([]);
+  const [jplLoading, setJplLoading] = useState(false);
+  const [isJplTarget, setIsJplTarget] = useState(() => loadSaved("isJplTarget", "0") === "1");
+  const [jplDesignation, setJplDesignation] = useState(() => loadSaved("jplDesignation", ""));
+  const [chartLoading, setChartLoading] = useState(false);
+
   // Best observation time
   const [bestObsTime, setBestObsTime] = useState<{ time: string; alt: string; sep: string } | null>(null);
 
@@ -349,7 +382,72 @@ export default function SkyObservationApp() {
   const [preset, setPreset] = useState<PresetOption>(() => loadSaved("preset", "tonight") as PresetOption);
 
   // Set initial range based on default preset
-  const [range, setRange] = useState(() => [getNightRange()]);
+  const [range, setRange] = useState(() => [getTonightRange()]);
+
+  const getJplCommand = (result: any) => {
+    const type = String(result?.type || "").toLowerCase();
+    const primaryName = String(result?.name || "").trim();
+    const primaryDesignation = String(result?.pdes || "").trim();
+
+    if (type.includes("comet") && primaryDesignation) {
+      return `DES=${primaryDesignation};CAP;NOFRAG`;
+    }
+
+    if (primaryDesignation) {
+      return `DES=${primaryDesignation};`;
+    }
+
+    const numberedName = primaryName.match(/^(\d+)\b/);
+    if (numberedName) {
+      return `${numberedName[1]}`;
+    }
+
+    if (primaryName) {
+      return `NAME=${primaryName.replace(/;/g, "")};`;
+    }
+
+    throw new Error("Selected JPL result is missing a usable designation.");
+  };
+
+  const getActiveJplRange = () => {
+    const activeRange = range?.[0];
+    if (activeRange?.startDate && activeRange?.endDate) {
+      return activeRange;
+    }
+    return getTonightRange();
+  };
+
+  const buildJplEphemerisParams = (
+    command: string,
+    startDate: Date,
+    endDate: Date,
+    stepMinutes: number,
+    site?: { lat: number; lon: number },
+    quantities: string = "1,2,4"
+  ) => {
+    const params: Record<string, string> = {
+      format: "json",
+      COMMAND: "'" + command + "'",
+      MAKE_EPHEM: "'YES'",
+      EPHEM_TYPE: "'OBSERVER'",
+      START_TIME: "'" + formatJplDate(startDate) + "'",
+      STOP_TIME: "'" + formatJplDate(endDate) + "'",
+      STEP_SIZE: "'" + stepMinutes + " min'",
+      QUANTITIES: "'" + quantities + "'",
+      OBJ_DATA: "'NO'",
+      CSV_FORMAT: "'YES'",
+    };
+
+    if (site && !isNaN(site.lat) && !isNaN(site.lon)) {
+      params.CENTER = "'coord@399'";
+      params.COORD_TYPE = "'GEODETIC'";
+      params.SITE_COORD = "'" + site.lon + "," + site.lat + ",0'";
+    } else {
+      params.CENTER = "'500@399'";
+    }
+
+    return new URLSearchParams(params);
+  };
 
   const [showPicker, setShowPicker] = useState(false);
   const [customRangeTouched, setCustomRangeTouched] = useState(false);
@@ -380,8 +478,10 @@ export default function SkyObservationApp() {
       localStorage.setItem("ata_lon", longitude);
       localStorage.setItem("ata_preset", preset);
       localStorage.setItem("ata_horizon", customHorizon);
+      localStorage.setItem("ata_isJplTarget", isJplTarget ? "1" : "0");
+      localStorage.setItem("ata_jplDesignation", jplDesignation);
     } catch { }
-  }, [ra, dec, latitude, longitude, preset, customHorizon]);
+  }, [ra, dec, latitude, longitude, preset, customHorizon, isJplTarget, jplDesignation]);
 
   // HUD info state — displayed below chart instead of as chart annotation
   const [chartInfo, setChartInfo] = useState<{
@@ -417,6 +517,8 @@ export default function SkyObservationApp() {
     setDec(target.dec);
     setTargetName(target.name);
     setCoordFormat("hms");
+    setIsJplTarget(false);
+    setJplDesignation("");
     setFieldErrors({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
   };
 
@@ -427,7 +529,7 @@ export default function SkyObservationApp() {
     setSimbadLoading(true);
     setSimbadResults([]);
     try {
-      const res = await fetch(`https://simbad.u-strasbg.fr/simbad/sim-nameresolver?Ident=${encodeURIComponent(q)}&output=json`);
+      const res = await corsFetch(`https://simbad.u-strasbg.fr/simbad/sim-nameresolver?Ident=${encodeURIComponent(q)}&output=json`);
       const data = await res.json();
       if (data && data.length > 0) {
         setSimbadResults(data);
@@ -462,9 +564,184 @@ export default function SkyObservationApp() {
     setDec(decStr);
     setTargetName(result.name || simbadQuery);
     setCoordFormat("hms");
+    setIsJplTarget(false);
+    setJplDesignation("");
     setSimbadResults([]);
+    setJplResults([]);
     setSimbadQuery("");
     setFieldErrors({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
+  };
+
+  // JPL Horizons lookup for comets & asteroids
+  const handleJplSearch = useCallback(async () => {
+    const q = simbadQuery.trim();
+    if (!q) return;
+    setJplLoading(true);
+    setJplResults([]);
+    setFieldErrors(prev => ({ ...prev, general: "" }));
+    try {
+      const url = `https://ssd.jpl.nasa.gov/api/horizons_lookup.api?sstr=${encodeURIComponent(q)}&group=sb`;
+      const res = await corsFetch(url);
+      const data = await res.json();
+      if (data && Number(data.count) > 0 && Array.isArray(data.result)) {
+        setJplResults(data.result.slice(0, 20));
+      } else {
+        setJplResults([]);
+        setFieldErrors(prev => ({ ...prev, general: `No JPL Horizons matches found for "${q}".` }));
+      }
+    } catch {
+      setJplResults([]);
+      setFieldErrors(prev => ({ ...prev, general: "JPL Horizons search failed. Check your connection." }));
+    } finally {
+      setJplLoading(false);
+    }
+  }, [simbadQuery]);
+
+  // Unified search: fires SIMBAD + JPL in parallel
+  const handleUnifiedSearch = useCallback(async () => {
+    const q = simbadQuery.trim();
+    if (!q) return;
+    setSimbadResults([]);
+    setJplResults([]);
+    setFieldErrors(prev => ({ ...prev, general: "" }));
+    await Promise.allSettled([handleSimbadSearch(), handleJplSearch()]);
+  }, [handleSimbadSearch, handleJplSearch, simbadQuery]);
+
+  // Select a JPL target (comet or asteroid)
+  // Select a JPL target (comet or asteroid) and fetch RA/Dec for display
+  const handleJplSelect = async (result: any) => {
+    let command = "";
+    try {
+      command = getJplCommand(result);
+      setIsJplTarget(true);
+      setJplDesignation(command);
+      setTargetName(result.name || simbadQuery);
+      setCoordFormat("hms");
+      setSimbadResults([]);
+      setJplResults([]);
+      setSimbadQuery("");
+      setFieldErrors({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
+
+      const latNum = parseFloat(latitude);
+      const lonNum = parseFloat(longitude);
+      const hasSiteCoords = !isNaN(latNum) && !isNaN(lonNum);
+      // Query RA/Dec at the current moment to match what JPL Horizons shows by default
+      const now = new Date();
+      const nowPlus1 = new Date(now.getTime() + 60000);
+      // Use QUANTITIES='1' (astrometric RA/Dec only) — gives exactly 3 CSV cols: [Date, RA, Dec]
+      const params = buildJplEphemerisParams(
+        command,
+        now,
+        nowPlus1,
+        1,
+        hasSiteCoords ? { lat: latNum, lon: lonNum } : undefined,
+        "1"
+      );
+
+      const res = await corsFetch(`https://ssd.jpl.nasa.gov/api/horizons.api?${params.toString()}`);
+      if (!res.ok) throw new Error(`JPL API error: ${res.status}`);
+      const data = await res.json();
+      const resultStr = data.result;
+      if (!resultStr.includes("$$SOE")) throw new Error("No ephemeris data.");
+      const soeIdx = resultStr.indexOf("$$SOE");
+      const eoeIdx = resultStr.indexOf("$$EOE");
+      const dataBlock = resultStr.substring(soeIdx + 5, eoeIdx).trim();
+      const lines = dataBlock.split("\n").filter((l) => l.trim());
+      if (lines.length > 0) {
+        // QUANTITIES='1' CSV: [Date, SolarPresenceFlag, RA (hh mm ss.ss), DEC (±dd mm ss.s), ...]
+        // The flag column may or may not be present, so scan for columns matching RA/Dec format
+        const cols = lines[0].split(",");
+        const raPattern = /^(\d{1,2})\s+(\d{1,2})\s+(\d{1,2}(?:\.\d+)?)$/;
+        const decPattern = /^([+\-]?\d{1,3})\s+(\d{1,2})\s+(\d{1,2}(?:\.\d+)?)$/;
+        let raMatch = null;
+        let decMatch = null;
+        // Find the first column (after date) matching RA, then the next matching DEC
+        for (let ci = 1; ci < cols.length; ci++) {
+          const txt = cols[ci]?.trim() || "";
+          if (!raMatch) {
+            raMatch = txt.match(raPattern);
+            if (raMatch) continue;
+          } else if (!decMatch) {
+            decMatch = txt.match(decPattern);
+            if (decMatch) break;
+          }
+        }
+        if (raMatch && decMatch) {
+          const raSec = Math.round(parseFloat(raMatch[3]));
+          const raStr =
+            String(parseInt(raMatch[1], 10)).padStart(2, "0") +
+            String(parseInt(raMatch[2], 10)).padStart(2, "0") +
+            String(Math.min(raSec, 59)).padStart(2, "0");
+          const decSec = Math.round(parseFloat(decMatch[3]));
+          const decSign = decMatch[1].startsWith("-") ? "-" : "+";
+          const decStr =
+            decSign +
+            String(Math.abs(parseInt(decMatch[1], 10))).padStart(2, "0") +
+            String(parseInt(decMatch[2], 10)).padStart(2, "0") +
+            String(Math.min(decSec, 59)).padStart(2, "0");
+          setRa(raStr);
+          setDec(decStr);
+        }
+      }
+    } catch (err) {
+      setRa("");
+      setDec("");
+      setFieldErrors(prev => ({
+        ...prev,
+        general: command
+          ? "Failed to fetch RA/Dec from JPL for the selected time range."
+          : "Failed to prepare the selected JPL target."
+      }));
+    }
+  };
+
+  // Fetch altitude time-series from JPL Horizons ephemeris API
+  const fetchJplEphemeris = async (
+    designation: string, lat: number, lon: number,
+    startDate: Date, endDate: Date, stepMinutes: number
+  ): Promise<{ times: Date[]; elevations: number[] }> => {
+    // QUANTITIES='4' → Apparent AZ & EL only → CSV: [Date, AZ, EL]
+    const params = buildJplEphemerisParams(designation, startDate, endDate, stepMinutes, { lat, lon }, "4");
+
+    const res = await corsFetch(`https://ssd.jpl.nasa.gov/api/horizons.api?${params.toString()}`);
+    if (!res.ok) throw new Error(`JPL API error: ${res.status}`);
+    const data = await res.json();
+    const resultStr: string = data.result;
+
+    if (!resultStr.includes("$$SOE")) {
+      if (resultStr.includes("Multiple record")) {
+        throw new Error("Multiple records matched. Try a more specific name.");
+      }
+      throw new Error("JPL Horizons did not return ephemeris data.");
+    }
+
+    const soeIdx = resultStr.indexOf("$$SOE");
+    const eoeIdx = resultStr.indexOf("$$EOE");
+    const dataBlock = resultStr.substring(soeIdx + 5, eoeIdx).trim();
+    const lines = dataBlock.split("\n").filter((l: string) => l.trim());
+    const months: Record<string, number> = {
+      Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+      Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
+    };
+    const times: Date[] = [];
+    const elevations: number[] = [];
+    for (const line of lines) {
+      const cols = line.split(",");
+      if (cols.length < 3) continue;
+      const dateStr = cols[0].trim();
+      const elev = parseFloat(cols[2].trim()); // cols[1]=AZ, cols[2]=EL
+      if (isNaN(elev)) continue;
+      const dateMatch = dateStr.match(/(\d{4})-([A-Za-z]{3})-(\d{2})\s+(\d{2}):(\d{2})/);
+      if (!dateMatch) continue;
+      const yr = parseInt(dateMatch[1]);
+      const mon = months[dateMatch[2]] ?? 0;
+      const day = parseInt(dateMatch[3]);
+      const hr = parseInt(dateMatch[4]);
+      const min = parseInt(dateMatch[5]);
+      times.push(new Date(Date.UTC(yr, mon, day, hr, min, 0)));
+      elevations.push(elev);
+    }
+    return { times, elevations };
   };
 
   // Theme state with system auto-detection
@@ -585,15 +862,15 @@ export default function SkyObservationApp() {
   };
 
   // --- Main plotting function ---
-  const renderChart = () => {
-    // Clear all field errors
-    const errors = { ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" };
-    let hasError = false;
-
+  const renderChart = async () => {
+    setChartLoading(true);
     try {
-
-      // --- Comprehensive per-field validation ---
+      // Clear all field errors
+      const errors = { ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" };
+      let hasError = false;
       let correctedDec = dec.trim();
+
+      // --- Non-JPL and JPL targets both use RA/Dec with astronomy-engine ---
 
       if (coordFormat === "deg") {
         // Degree format validation
@@ -687,7 +964,6 @@ export default function SkyObservationApp() {
 
       // Timezone & date-range bounds
       const tz = tzlookup(latN, lonN);
-      // Get timezone abbreviation (e.g., CST, EST) from the IANA timezone
       const tzAbbrev = DateTime.now().setZone(tz).toFormat("ZZZZ");
       const startDateObj = range[0].startDate;
       const endDateObj = range[0].endDate;
@@ -697,7 +973,6 @@ export default function SkyObservationApp() {
 
       // If range > 30 days, switch to daily-max mode:
       if (diffDays > 30) {
-        // In daily mode, we'll sample each day every 15 minutes
         const stepMin = 15;
         const intervalMs = stepMin * 60 * 1000;
 
@@ -705,7 +980,6 @@ export default function SkyObservationApp() {
         const dailyMaxAlt: number[] = [];
         const dailyHover: string[] = [];
 
-        // For each day in [startDateObj .. endDateObj], compute max altitude
         for (let d = 0; d < diffDays; d++) {
           const dayStart = addDays(startDateObj, d);
           const dayEnd = endOfDay(dayStart);
@@ -713,7 +987,6 @@ export default function SkyObservationApp() {
           let maxAlt: number | null = null;
           let maxTime: Date | null = null;
 
-          // Sample every 15 minutes from dayStart → dayEnd
           for (
             let t = dayStart.getTime();
             t <= dayEnd.getTime();
@@ -730,8 +1003,7 @@ export default function SkyObservationApp() {
           }
 
           if (maxAlt !== null && maxTime !== null) {
-            // Store midday of that day as x-value
-            const midday = addDays(startOfDay(dayStart), 0.5); // midday
+            const midday = addDays(startOfDay(dayStart), 0.5);
             dailyDates.push(midday);
             dailyMaxAlt.push(maxAlt);
             const localDT = DateTime.fromJSDate(maxTime).setZone(tz);
@@ -745,7 +1017,6 @@ export default function SkyObservationApp() {
           }
         }
 
-        // Plot daily-max trace
         setPlotData({
           data: [
             {
@@ -780,13 +1051,13 @@ export default function SkyObservationApp() {
               type: "date",
               tickformat: "%b %d",
               showgrid: false,
-                            linecolor: "rgba(128,128,128,0.3)",
+              linecolor: "rgba(128,128,128,0.3)",
               tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
             },
             yaxis: {
               title: { text: "Max Altitude (°)", font: { family: "Inter, system-ui, sans-serif", size: 13 } },
               showgrid: false,
-                            linecolor: "rgba(128,128,128,0.3)",
+              linecolor: "rgba(128,128,128,0.3)",
               zeroline: true,
               zerolinecolor: "rgba(128,128,128,0.3)",
               tickfont: { family: "Inter, system-ui, sans-serif", size: 11 },
@@ -806,17 +1077,14 @@ export default function SkyObservationApp() {
         return;
       }
 
-      // --- Otherwise, for diffDays ≤ 30, do full 5-min sampling over entire range ---
-      // Compute total minutes in the selected window
+      // --- For diffDays ≤ 30, do full 5-min sampling over entire range ---
       const totalMins = differenceInMinutes(endDateObj, startDateObj);
       let stepMin = 5;
-      // If too many points (>10k), increase stepMin
       if (totalMins / stepMin > 10000) {
         stepMin = Math.ceil(totalMins / 10000);
       }
       const intervalMs = stepMin * 60 * 1000;
 
-      // Build an array of allTimes from startDateObj → endDateObj, stepping by intervalMs
       const allTimes: Date[] = [];
       for (
         let t = startDateObj.getTime();
@@ -826,8 +1094,8 @@ export default function SkyObservationApp() {
         allTimes.push(new Date(t));
       }
 
-      // Arrays to collect altitudes
       const targetAlt: Array<number | null> = [];
+      const targetAltRaw: number[] = [];
       const moonAlt: Array<number | null> = [];
       const moonAltRaw: number[] = [];
       const sunAlt: number[] = [];
@@ -841,23 +1109,20 @@ export default function SkyObservationApp() {
 
       allTimes.forEach((jsDate, i) => {
         const t = Astronomy.MakeTime(jsDate);
-        // Target
         const tgt = Astronomy.Horizon(t, obs, raH, decD, "normal");
         const altT = tgt.altitude >= 0 ? tgt.altitude : null;
         targetAlt.push(altT);
+        targetAltRaw.push(tgt.altitude);
 
-        // Moon
         const mEq = Astronomy.Equator(Astronomy.Body.Moon, t, obs, true, true);
         const mH = Astronomy.Horizon(t, obs, mEq.ra, mEq.dec, "normal");
         moonAlt.push(mH.altitude >= 0 ? mH.altitude : null);
         moonAltRaw.push(mH.altitude);
 
-        // Sun
         const sEq = Astronomy.Equator(Astronomy.Body.Sun, t, obs, true, true);
         const sH = Astronomy.Horizon(t, obs, sEq.ra, sEq.dec, "normal");
         sunAlt.push(sH.altitude);
 
-        // Angular separation (target <-> moon)
         const ra1 = (raH * Math.PI) / 12, dec1 = (decD * Math.PI) / 180;
         const ra2 = (mEq.ra * Math.PI) / 12, dec2 = (mEq.dec * Math.PI) / 180;
         const cs = Math.sin(dec1) * Math.sin(dec2) + Math.cos(dec1) * Math.cos(dec2) * Math.cos(ra1 - ra2);
@@ -865,25 +1130,21 @@ export default function SkyObservationApp() {
         sepArr.push(sep);
         if (sep < minSep) minSep = sep;
 
-        // Track peak index
         if (altT !== null && altT > (targetAlt[peakIdx] ?? -Infinity)) {
           peakIdx = i;
         }
 
-        // Best observation time: maximize (altitude / 90) + (separation / 180) during night (sun < -6)
         if (altT !== null && altT > 0 && sH.altitude < -6) {
           const score = (altT / 90) + (sep / 180);
           if (score > bestObsScore) { bestObsScore = score; bestObsIdx = i; }
         }
 
-        // Hover texts
         const localDT = DateTime.fromJSDate(jsDate).setZone(tz);
         hoverText.push(
           altT !== null
             ? `Time: ${localDT.toFormat("yyyy-LL-dd HH:mm")}<br>Alt: ${altT.toFixed(2)}°<br>Sep: ${sep.toFixed(2)}°`
             : ""
         );
-        // Moon hover with 2 decimal places
         moonHoverText.push(
           mH.altitude >= 0
             ? `Time: ${localDT.toFormat("yyyy-LL-dd HH:mm")}<br>Moon Alt: ${mH.altitude.toFixed(2)}°`
@@ -891,7 +1152,49 @@ export default function SkyObservationApp() {
         );
       });
 
-      // Compute best observation time
+      // --- Insert interpolated 0° crossing points at rise and set ---
+      // Scan backwards so splicing doesn't shift indices we haven't visited yet.
+      for (let i = targetAltRaw.length - 1; i >= 1; i--) {
+        const prev = targetAltRaw[i - 1];
+        const cur  = targetAltRaw[i];
+        // Detect a sign change across 0°
+        if ((prev < 0 && cur >= 0) || (prev >= 0 && cur < 0)) {
+          const t0 = allTimes[i - 1].getTime();
+          const t1 = allTimes[i].getTime();
+          const ratio = (0 - prev) / (cur - prev);
+          const crossMs = t0 + ratio * (t1 - t0);
+          const crossDate = new Date(crossMs);
+
+          const crossT   = Astronomy.MakeTime(crossDate);
+          const mEqC     = Astronomy.Equator(Astronomy.Body.Moon, crossT, obs, true, true);
+          const mHC      = Astronomy.Horizon(crossT, obs, mEqC.ra, mEqC.dec, "normal");
+          const sEqC     = Astronomy.Equator(Astronomy.Body.Sun, crossT, obs, true, true);
+          const sHC      = Astronomy.Horizon(crossT, obs, sEqC.ra, sEqC.dec, "normal");
+
+          const ra1c = (raH * Math.PI) / 12,  dec1c = (decD * Math.PI) / 180;
+          const ra2c = (mEqC.ra * Math.PI) / 12, dec2c = (mEqC.dec * Math.PI) / 180;
+          const csC  = Math.sin(dec1c) * Math.sin(dec2c) + Math.cos(dec1c) * Math.cos(dec2c) * Math.cos(ra1c - ra2c);
+          const sepC = (Math.acos(Math.min(Math.max(csC, -1), 1)) * 180) / Math.PI;
+
+          const localDTC = DateTime.fromJSDate(crossDate).setZone(tz);
+          const crossHover = `Time: ${localDTC.toFormat("yyyy-LL-dd HH:mm")}<br>Alt: 0.00° (${prev < 0 ? "rise" : "set"})<br>Sep: ${sepC.toFixed(2)}°`;
+          const crossMoonHover = mHC.altitude >= 0
+            ? `Time: ${localDTC.toFormat("yyyy-LL-dd HH:mm")}<br>Moon Alt: ${mHC.altitude.toFixed(2)}°`
+            : "";
+
+          // Splice into every parallel array at position i (between i-1 and i)
+          allTimes.splice(i, 0, crossDate);
+          targetAlt.splice(i, 0, 0);
+          targetAltRaw.splice(i, 0, 0);
+          moonAlt.splice(i, 0, mHC.altitude >= 0 ? mHC.altitude : null);
+          moonAltRaw.splice(i, 0, mHC.altitude);
+          sunAlt.splice(i, 0, sHC.altitude);
+          hoverText.splice(i, 0, crossHover);
+          moonHoverText.splice(i, 0, crossMoonHover);
+          sepArr.splice(i, 0, sepC);
+        }
+      }
+
       if (bestObsIdx >= 0) {
         const bestDT = DateTime.fromJSDate(allTimes[bestObsIdx]).setZone(tz);
         setBestObsTime({
@@ -903,7 +1206,6 @@ export default function SkyObservationApp() {
         setBestObsTime(null);
       }
 
-      // Interpolate Astronomical Dusk / Dawn:
       const threshold = -18;
       let astroDuskDate: Date | null = null;
       let astroDawnDate: Date | null = null;
@@ -926,17 +1228,12 @@ export default function SkyObservationApp() {
         }
       }
       const duskLocal = astroDuskDate
-        ? DateTime.fromJSDate(astroDuskDate)
-          .setZone(tz)
-          .toFormat("yyyy-LL-dd HH:mm")
+        ? DateTime.fromJSDate(astroDuskDate).setZone(tz).toFormat("yyyy-LL-dd HH:mm")
         : "N/A";
       const dawnLocal = astroDawnDate
-        ? DateTime.fromJSDate(astroDawnDate)
-          .setZone(tz)
-          .toFormat("yyyy-LL-dd HH:mm")
+        ? DateTime.fromJSDate(astroDawnDate).setZone(tz).toFormat("yyyy-LL-dd HH:mm")
         : "N/A";
 
-      // Compute visibility hours: only when target is above custom horizon AND during astronomical night (sun < -18°)
       const hz = Number(customHorizon);
       let visCount = 0;
       for (let i = 0; i < targetAlt.length; i++) {
@@ -944,18 +1241,15 @@ export default function SkyObservationApp() {
       }
       const visibilityHours = (visCount * stepMin) / 60;
 
-      // Peak marker
       const peakTime = allTimes[peakIdx];
       const peakAlt = targetAlt[peakIdx]!;
 
-      // Moon phase at mid‐range
       const midIndex = Math.floor(allTimes.length / 2);
       const midJS = allTimes[midIndex];
       const moonPct =
         Astronomy.Illumination(Astronomy.Body.Moon, Astronomy.MakeTime(midJS))
           .phase_fraction * 100;
 
-      // Store HUD info for display below chart
       setChartInfo({
         moonPct: moonPct.toFixed(1),
         visibilityHours: visibilityHours.toFixed(2),
@@ -965,7 +1259,6 @@ export default function SkyObservationApp() {
         tzFull: tz,
       });
 
-      // Build Plotly traces/layout with vertical lines
       setPlotData({
         data: [
           {
@@ -983,7 +1276,7 @@ export default function SkyObservationApp() {
             x: allTimes,
             y: moonAlt,
             mode: "lines",
-            name: "🌙 Moon Altitude",
+            name: "Moon Altitude",
             hoverinfo: "text",
             hovertext: moonHoverText,
             line: { dash: "dash", color: "#f5a623", width: 2 },
@@ -1015,7 +1308,6 @@ export default function SkyObservationApp() {
               line: { color: "rgba(255, 215, 0, 0.4)", width: 3 },
             },
           },
-          // "Now" marker — shown when current time falls within the chart range
           ...(() => {
             const nowDate = new Date();
             if (nowDate >= allTimes[0] && nowDate <= allTimes[allTimes.length - 1]) {
@@ -1082,21 +1374,20 @@ export default function SkyObservationApp() {
               borderwidth: 1,
               borderpad: 5,
             },
-
           ],
           xaxis: {
             title: { text: `Local Time [${tzAbbrev}]`, font: { family: "Inter, system-ui, sans-serif", size: 14, color: "#00d2ff" } },
             type: "date",
             tickformat: diffDays > 1 ? "%b %d %H:%M" : "%H:%M",
-            dtick: diffDays > 7 ? 86400000 : undefined, // daily ticks for long ranges
+            dtick: diffDays > 7 ? 86400000 : undefined,
             showgrid: false,
-                        tickfont: { family: "Inter, system-ui, sans-serif", size: 12, color: "#a0cfdf" },
+            tickfont: { family: "Inter, system-ui, sans-serif", size: 12, color: "#a0cfdf" },
             showline: false,
           },
           yaxis: {
             title: { text: "Altitude (°)", font: { family: "Inter, system-ui, sans-serif", size: 14, color: "#00d2ff" } },
             showgrid: false,
-                        zeroline: true,
+            zeroline: true,
             zerolinecolor: "rgba(255,255,255,0.2)",
             zerolinewidth: 2,
             tickfont: { family: "Inter, system-ui, sans-serif", size: 12, color: "#a0cfdf" },
@@ -1127,6 +1418,8 @@ export default function SkyObservationApp() {
     } catch (e: any) {
       console.error("renderChart error:", e);
       setFieldErrors(prev => ({ ...prev, general: "Error: " + (e?.message || String(e)) }));
+    } finally {
+      setChartLoading(false);
     }
   };
 
@@ -1478,18 +1771,56 @@ export default function SkyObservationApp() {
           maxHeight: isMobile ? "none" : "100%",
         }}>
 
-          {/* SIMBAD Search */}
+          {/* Target Search with SIMBAD/JPL toggle */}
           <div style={{ marginBottom: "10px", background: cardBg, borderRadius: "10px", padding: "10px", border: `1px solid ${borderCol}` }}>
             <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "4px", color: accentColor, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-               SIMBAD Target Search
+              Target Search
             </label>
+            <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
+              <button
+                onClick={() => setIsJplTarget(false)}
+                style={{
+                  flex: 1,
+                  padding: "6px 0",
+                  borderRadius: "6px",
+                  border: isJplTarget ? `1px solid ${inputBorder}` : `2px solid ${accentColor}`,
+                  background: !isJplTarget ? accentColor : "transparent",
+                  color: !isJplTarget ? "#fff" : textMuted,
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                SIMBAD
+              </button>
+              <button
+                onClick={() => setIsJplTarget(true)}
+                style={{
+                  flex: 1,
+                  padding: "6px 0",
+                  borderRadius: "6px",
+                  border: !isJplTarget ? `1px solid ${inputBorder}` : `2px solid ${accentColor}`,
+                  background: isJplTarget ? accentColor : "transparent",
+                  color: isJplTarget ? "#fff" : textMuted,
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                JPL Horizons
+              </button>
+            </div>
             <div style={{ display: "flex", gap: "6px" }}>
               <input
                 type="text"
                 value={simbadQuery}
-                placeholder="e.g. M31, NGC 7000..."
+                placeholder={isJplTarget ? "e.g. 67P, C/2023 A3, 3200 Phaethon..." : "e.g. M31, NGC 7000..."}
                 onChange={(e) => setSimbadQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSimbadSearch()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") isJplTarget ? handleJplSearch() : handleSimbadSearch();
+                }}
                 style={{
                   flex: 1, padding: "8px 10px", fontSize: "13px", borderRadius: "8px",
                   border: `1px solid ${inputBorder}`, background: inputBg,
@@ -1498,19 +1829,20 @@ export default function SkyObservationApp() {
                 }}
               />
               <button
-                onClick={handleSimbadSearch}
-                disabled={simbadLoading}
+                onClick={isJplTarget ? handleJplSearch : handleSimbadSearch}
+                disabled={isJplTarget ? jplLoading : simbadLoading}
                 style={{
                   padding: "8px 14px", borderRadius: "8px", border: "none", cursor: "pointer",
                   background: `linear-gradient(135deg, ${accentColor}, #7C5CFC)`, color: "#fff",
                   fontSize: "12px", fontWeight: 700, transition: "opacity 0.2s",
-                  opacity: simbadLoading ? 0.6 : 1,
+                  opacity: (isJplTarget ? jplLoading : simbadLoading) ? 0.6 : 1,
                 }}
               >
-                {simbadLoading ? "..." : "Search"}
+                {(isJplTarget ? jplLoading : simbadLoading) ? "..." : "Search"}
               </button>
             </div>
-            {simbadResults.length > 0 && (
+            {/* SIMBAD Results */}
+            {!isJplTarget && simbadResults.length > 0 && (
               <div style={{ marginTop: "6px", maxHeight: "120px", overflowY: "auto", borderRadius: "6px", border: `1px solid ${borderCol}`, background: inputBg }}>
                 {simbadResults.map((r, i) => (
                   <div
@@ -1527,6 +1859,29 @@ export default function SkyObservationApp() {
                     <strong>{r.name}</strong>
                     <span style={{ color: textMuted, marginLeft: "8px" }}>
                       RA: {r.ra?.toFixed(3)}° DEC: {r.dec?.toFixed(3)}°
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* JPL Horizons Results */}
+            {isJplTarget && jplResults.length > 0 && (
+              <div style={{ marginTop: "6px", maxHeight: "120px", overflowY: "auto", borderRadius: "6px", border: `1px solid ${borderCol}`, background: inputBg }}>
+                {jplResults.map((r, i) => (
+                  <div
+                    key={i}
+                    onClick={() => handleJplSelect(r)}
+                    style={{
+                      padding: "6px 10px", cursor: "pointer", fontSize: "12px",
+                      borderBottom: i < jplResults.length - 1 ? `1px solid ${borderCol}` : "none",
+                      transition: "background 0.15s",
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = theme === "dark" ? "rgba(79,193,233,0.1)" : "rgba(41,128,185,0.08)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  >
+                    <strong>{r.name}</strong>
+                    <span style={{ color: textMuted, marginLeft: "8px" }}>
+                      {r.type} | {r.pdes}
                     </span>
                   </div>
                 ))}
@@ -1549,7 +1904,7 @@ export default function SkyObservationApp() {
           </div>
           {targetName && (
             <p style={{ textAlign: "center", fontSize: "12px", marginBottom: "8px", color: accentColor, fontWeight: 600 }}>
-              🎯 {targetName}
+               {targetName}
             </p>
           )}
 
@@ -1709,7 +2064,8 @@ export default function SkyObservationApp() {
                 setRa(""); setDec(""); setLatitude(""); setLongitude("");
                 setCustomHorizon("30"); setPreset("tonight");
                 setPlotData({ data: [], layout: {} }); setChartInfo(null); setTargetName("");
-                setBestObsTime(null); setSimbadQuery(""); setSimbadResults([]);
+                setBestObsTime(null); setSimbadQuery(""); setSimbadResults([]); setJplResults([]);
+                setIsJplTarget(false); setJplDesignation("");
                 setFieldErrors({ ra: "", dec: "", lat: "", lon: "", horizon: "", general: "" });
                 try { Object.keys(localStorage).filter(k => k.startsWith("ata_")).forEach(k => localStorage.removeItem(k)); } catch { }
               }}
@@ -1818,7 +2174,7 @@ export default function SkyObservationApp() {
                 fontSize: isMobile ? "0.9rem" : "1rem", fontWeight: 700,
                 color: theme === "dark" ? "#4FC1E9" : "#2980B9", letterSpacing: "0.5px",
               }}>
-                🎯 {targetName}
+                 {targetName}
               </span>
             </div>
           )}
@@ -1864,7 +2220,7 @@ export default function SkyObservationApp() {
                 display: "flex", alignItems: "center", justifyContent: "center", height: "100%",
                 color: textMuted, fontSize: "14px", fontStyle: "italic",
               }}>
-                <span>Enter coordinates and generate a chart ✨</span>
+                <span>Enter coordinates and generate a chart</span>
               </div>
             )}
           </div>
